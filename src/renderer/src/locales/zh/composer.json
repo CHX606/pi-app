@@ -144,6 +144,7 @@
   "current": "当前：",
   "searchModelPlaceholder": "搜索模型",
   "noModels": "无可用模型（检查 ~/.pi/agent/auth.json）",
+  "loadingModels": "正在加载模型…",
   "noMatch": "无匹配",
   "unavailable": "不可用",
   "modelCount": "共 {{total}} 个，显示 {{shown}} 个",

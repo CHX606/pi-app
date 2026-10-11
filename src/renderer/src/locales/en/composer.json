@@ -144,6 +144,7 @@
   "current": "Current: ",
   "searchModelPlaceholder": "Search models",
   "noModels": "No models available (check ~/.pi/agent/auth.json)",
+  "loadingModels": "Loading models…",
   "noMatch": "No match",
   "unavailable": "Unavailable",
   "modelCount": "{{total}} total, showing {{shown}}",

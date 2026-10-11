@@ -11,6 +11,7 @@ import { userActionToast } from '@renderer/lib/startup-toast-guard'
 import { readRecentModels, rememberRecentModel } from '@renderer/lib/recent-models'
 import { ComposerPopover } from './composer-popover'
 import {
+  isAvailableModelsPending,
   peekAvailableModels,
   refreshAvailableModels,
   subscribeAvailableModels,
@@ -62,9 +63,22 @@ export function ModelPicker() {
   const [activeIndex, setActiveIndex] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
-  const reload = () => refreshAvailableModels().catch(() => peekAvailableModels())
+  const [loading, setLoading] = useState(() => isAvailableModelsPending())
 
-  useEffect(() => subscribeAvailableModels(setModels), [])
+  const reload = () => {
+    const request = refreshAvailableModels().catch(() => peekAvailableModels())
+    setLoading(isAvailableModelsPending())
+    return request
+  }
+
+  useEffect(
+    () =>
+      subscribeAvailableModels((next) => {
+        setModels(next)
+        setLoading(isAvailableModelsPending())
+      }),
+    [],
+  )
 
   useEffect(() => {
     if (!open) return
@@ -258,8 +272,17 @@ export function ModelPicker() {
 
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
         {filtered.length === 0 && (
-          <div className="px-4 py-6 text-center text-[12px] text-muted-foreground/50">
-            {models.length === 0 ? t('composer:noModels') : t('composer:noMatch')}
+          <div className="flex items-center justify-center gap-1.5 px-4 py-6 text-center text-[12px] text-muted-foreground/50">
+            {models.length > 0 ? (
+              t('composer:noMatch')
+            ) : loading ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                {t('composer:loadingModels')}
+              </>
+            ) : (
+              t('composer:noModels')
+            )}
           </div>
         )}
         {recentRows.length > 0 ? (

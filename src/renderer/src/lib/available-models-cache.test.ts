@@ -4,6 +4,7 @@ import {
   clearAvailableModelsCacheForTests,
   ensureAvailableModels,
   invalidateAvailableModels,
+  isAvailableModelsPending,
   peekAvailableModels,
   prefetchAvailableModels,
   refreshAvailableModels,
@@ -83,6 +84,45 @@ describe('available model cache', () => {
     resolveOld?.({ models })
     await expect(oldRequest).resolves.toEqual(newerModels)
     expect(peekAvailableModels()).toEqual(newerModels)
+  })
+
+  it('retries an empty cold-start list on its own until models arrive', async () => {
+    vi.useFakeTimers()
+    try {
+      invoke.mockResolvedValueOnce({ models: [] })
+      const listener = vi.fn()
+      subscribeAvailableModels(listener)
+
+      prefetchAvailableModels()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(peekAvailableModels()).toEqual([])
+      expect(isAvailableModelsPending()).toBe(true)
+
+      invoke.mockResolvedValueOnce({ models })
+      await vi.advanceTimersByTimeAsync(800)
+
+      expect(invoke).toHaveBeenCalledTimes(2)
+      expect(peekAvailableModels()).toEqual(models)
+      expect(listener).toHaveBeenLastCalledWith(models)
+      expect(isAvailableModelsPending()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops retrying an empty list after a few attempts', async () => {
+    vi.useFakeTimers()
+    try {
+      invoke.mockResolvedValue({ models: [] })
+
+      prefetchAvailableModels()
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      expect(invoke).toHaveBeenCalledTimes(5)
+      expect(isAvailableModelsPending()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('preserves a previous snapshot when refresh fails', async () => {

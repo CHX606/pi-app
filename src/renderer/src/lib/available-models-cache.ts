@@ -7,8 +7,36 @@ let generation = 0
 let invalidated = true
 const listeners = new Set<(models: ModelInfo[]) => void>()
 
+/**
+ * Right after a cold start neither the worker's model runtime nor the preview process may be
+ * ready, and the main side reports that as an empty list (or a failure). An empty snapshot is
+ * therefore never treated as settled: it is retried a few times on its own.
+ */
+const EMPTY_RETRY_DELAYS_MS = [800, 2000, 4000, 8000]
+let emptyRetries = 0
+let emptyRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearEmptyRetry(): void {
+  if (emptyRetryTimer !== null) clearTimeout(emptyRetryTimer)
+  emptyRetryTimer = null
+}
+
+function scheduleEmptyRetry(): void {
+  if (emptyRetryTimer !== null || emptyRetries >= EMPTY_RETRY_DELAYS_MS.length) return
+  emptyRetryTimer = setTimeout(() => {
+    emptyRetryTimer = null
+    if (snapshot.length > 0) return
+    void refreshAvailableModels().catch(() => {})
+  }, EMPTY_RETRY_DELAYS_MS[emptyRetries++])
+}
+
 export function peekAvailableModels(): ModelInfo[] {
   return snapshot
+}
+
+/** True while a request is in flight or an empty list is about to be retried. */
+export function isAvailableModelsPending(): boolean {
+  return inFlight !== null || emptyRetryTimer !== null
 }
 
 export function subscribeAvailableModels(listener: (models: ModelInfo[]) => void): () => void {
@@ -25,17 +53,28 @@ export function refreshAvailableModels(): Promise<ModelInfo[]> {
     ? Promise.resolve(invokeResult)
     : Promise.resolve({ models: snapshot }))
     .then((res) => {
+      if (inFlight?.promise === promise) inFlight = null
       if (requestGeneration !== generation) return snapshot
       snapshot = Array.isArray(res?.models) ? res.models : []
+      if (snapshot.length > 0) {
+        emptyRetries = 0
+        clearEmptyRetry()
+      } else {
+        invalidated = true
+        scheduleEmptyRetry()
+      }
       for (const listener of listeners) listener(snapshot)
       return snapshot
     })
     .catch((error) => {
-      if (requestGeneration === generation) invalidated = true
-      throw error
-    })
-    .finally(() => {
       if (inFlight?.promise === promise) inFlight = null
+      if (requestGeneration === generation) {
+        invalidated = true
+        if (snapshot.length === 0) scheduleEmptyRetry()
+        // Same snapshot, but the pending state changed.
+        for (const listener of listeners) listener(snapshot)
+      }
+      throw error
     })
   inFlight = { generation: requestGeneration, promise }
   return promise
@@ -68,6 +107,8 @@ export function ensureCatalogModels(): Promise<ModelInfo[]> {
 export function invalidateAvailableModels(): void {
   generation += 1
   invalidated = true
+  emptyRetries = 0
+  clearEmptyRetry()
 }
 
 export function prefetchAvailableModels(): void {
@@ -80,5 +121,7 @@ export function clearAvailableModelsCacheForTests(): void {
   generation = 0
   invalidated = true
   catalog = null
+  emptyRetries = 0
+  clearEmptyRetry()
   listeners.clear()
 }
