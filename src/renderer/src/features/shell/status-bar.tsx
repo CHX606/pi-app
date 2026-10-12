@@ -11,7 +11,7 @@ import { countAttention, listAttentionSessions, type SessionAttention } from '@r
 import { activateWorkspace, switchSessionInPlace } from '@renderer/lib/activate-workspace'
 import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { loadWorkspaceSessionList } from '@renderer/lib/refresh-workspace-session-lists'
-import { uniqueWorkspacePaths, workspacePathKey, workspacePathsEqual } from '@shared/workspace-path'
+import { workspacePathKey, workspacePathsEqual } from '@shared/workspace-path'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { SessionAttentionDot } from '@renderer/features/workspace/session-attention-dot'
 import { BranchStatusTrigger } from '@renderer/features/git/branch-status'
@@ -79,15 +79,27 @@ export function StatusBar() {
   useEffect(() => {
     if (!popover) return
     let cancelled = false
-    const workspaces = uniqueWorkspacePaths((status?.workers ?? []).map((row) => row.cwd))
-      .filter((workspace) => !workspacePathsEqual(workspace, currentWorkspace))
-    for (const workspace of workspaces) {
+    const workers = status?.workers ?? []
+    const requestedWorkspaces = new Set<string>()
+    const loadWorkspace = (workspace: string | null | undefined) => {
+      if (cancelled || !workspace || workspacePathsEqual(workspace, currentWorkspace)) return
+      const key = workspacePathKey(workspace)
+      if (requestedWorkspaces.has(key)) return
+      requestedWorkspaces.add(key)
       void loadWorkspaceSessionList(workspace).then((list) => {
-        if (!cancelled && list) setSessionsByWorkspace((previous) => ({ ...previous, [workspacePathKey(workspace)]: list }))
+        if (!cancelled && list) setSessionsByWorkspace((previous) => ({ ...previous, [key]: list }))
       })
     }
+    for (const worker of workers) loadWorkspace(worker.cwd)
+    for (const sessionFile of Object.keys(attention)) {
+      if (sessions.some((session) => sessionFilesEqual(session.sessionFile, sessionFile))
+        || workers.some((worker) => sessionFilesEqual(worker.sessionFile, sessionFile))) continue
+      void ipcClient.invoke('session.prepare', { sessionFile, bind: false })
+        .then((prepared) => loadWorkspace(prepared?.workspaceId))
+        .catch(() => {})
+    }
     return () => { cancelled = true }
-  }, [popover, status?.workers, currentWorkspace])
+  }, [popover, status?.workers, currentWorkspace, sessions, attention])
   useEffect(
     () => onAppUpdateAvailable((update) => setOpenUpdate(() => () => showAppUpdateDialog(update))),
     [],
