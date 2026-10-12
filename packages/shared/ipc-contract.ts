@@ -86,8 +86,13 @@ export interface SessionForkCandidatesResponse {
 }
 export interface SessionRenameRequest { sessionId: string; title: string }
 export interface SessionRenameResponse { session: SessionInfo }
-export interface SessionCompactRequest { sessionId: string }
-export interface SessionCompactResponse { sessionId: string; compacted: boolean; tokensSaved: number }
+export interface SessionCompactRequest {
+  sessionId: string
+  sessionFile: string
+  workspaceId?: string
+  customInstructions?: string
+}
+export interface SessionCompactResponse { sessionId: string; compacted: boolean; tokensSaved: number; error?: string }
 export interface SessionExportRequest { sessionId: string; format: 'json' | 'markdown' | 'html' }
 export interface SessionExportResponse { content: string; format: string; filename: string }
 export interface ContextPreviewRequest { sessionFile: string; workspaceId: string }

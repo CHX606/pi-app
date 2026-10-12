@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   newSession: vi.fn(),
   forkSession: vi.fn(),
   cloneSession: vi.fn(),
+  compactSession: vi.fn(),
+  runExtensionCommand: vi.fn(),
   renamePiSessionOnDisk: vi.fn(),
   authorizeTrustedSessionFile: vi.fn((workspaceId: string, sessionFile: string) => ({
     ok: true,
@@ -48,6 +50,8 @@ vi.mock('../../worker-manager', () => ({
     newSession: mocks.newSession,
     forkSession: mocks.forkSession,
     cloneSession: mocks.cloneSession,
+    compactSession: mocks.compactSession,
+    runExtensionCommand: mocks.runExtensionCommand,
     deleteSessionFile: mocks.deleteSessionFile,
     getState: vi.fn(async () => ({})),
   },
@@ -104,6 +108,8 @@ describe('session list preview invalidation', () => {
     mocks.forkSession.mockResolvedValue({ sessionId: 'fork', sessionFile: '/sessions/fork.jsonl' })
     mocks.cloneSession.mockReset()
     mocks.cloneSession.mockResolvedValue({ sessionId: 'clone', sessionFile: '/sessions/clone.jsonl' })
+    mocks.compactSession.mockReset().mockResolvedValue({ sessionId: 'source', tokensSaved: 800 })
+    mocks.runExtensionCommand.mockReset()
     mocks.renamePiSessionOnDisk.mockReset()
     mocks.renamePiSessionOnDisk.mockResolvedValue({ ok: true })
     mocks.deleteSessionFile.mockReset()
@@ -115,6 +121,39 @@ describe('session list preview invalidation', () => {
       sessionFile,
     }))
     registerSessionHandlers()
+  })
+
+  it('waits for real compaction of the authorized session without running a prompt command', async () => {
+    let resolve!: (result: { sessionId: string; tokensSaved: number }) => void
+    mocks.compactSession.mockReturnValue(new Promise((done) => { resolve = done }))
+    let settled = false
+    const pending = mocks.handlers.get('ipc:session.compact')!({
+      workspaceId: '/workspace', sessionFile: '/sessions/source.jsonl', customInstructions: 'keep decisions',
+    }).then((result) => { settled = true; return result })
+    await Promise.resolve()
+
+    expect(mocks.compactSession).toHaveBeenCalledWith('/sessions/source.jsonl', 'keep decisions')
+    expect(settled).toBe(false)
+    expect(mocks.runExtensionCommand).not.toHaveBeenCalled()
+    resolve({ sessionId: 'source', tokensSaved: 800 })
+    expect(await pending).toEqual({ sessionId: 'source', tokensSaved: 800, compacted: true })
+  })
+
+  it('reports compaction failure instead of confirming success', async () => {
+    mocks.compactSession.mockRejectedValue(new Error('Nothing to compact'))
+
+    expect(await mocks.handlers.get('ipc:session.compact')!({
+      workspaceId: '/workspace', sessionFile: '/sessions/source.jsonl',
+    })).toEqual({ sessionId: '', tokensSaved: 0, compacted: false, error: 'Nothing to compact' })
+  })
+
+  it('rejects compaction outside the trusted session boundary', async () => {
+    mocks.authorizeTrustedSessionFile.mockResolvedValueOnce({ ok: false, error: 'untrusted' } as never)
+
+    expect(await mocks.handlers.get('ipc:session.compact')!({
+      workspaceId: '/workspace', sessionFile: '/untrusted.jsonl',
+    })).toMatchObject({ compacted: false, error: 'untrusted' })
+    expect(mocks.compactSession).not.toHaveBeenCalled()
   })
 
   it('includes parent file identity in the session.list response', async () => {

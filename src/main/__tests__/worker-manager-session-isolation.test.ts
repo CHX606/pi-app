@@ -167,6 +167,22 @@ describe('WorkerManager session isolation', () => {
     expect(internals.pool.has(normalizeSessionKey('/sessions/new-2.jsonl'))).toBe(true)
   })
 
+  it('compacts only the requested session while another worker is foreground', async () => {
+    const foreground = fakeSlot(normalizeSessionKey('/sessions/a.jsonl'))
+    const requested = fakeSlot(normalizeSessionKey('/sessions/b.jsonl'))
+    const { manager, internals } = managerWithForeground(foreground)
+    internals.pool.set(requested.poolKey, requested)
+    replyFrom(requested, { type: 'compact-done', sessionId: 'b', tokensSaved: 800 })
+
+    expect(await manager.compactSession(requested.poolKey, 'keep decisions'))
+      .toEqual({ sessionId: 'b', tokensSaved: 800 })
+
+    expect(foreground.worker.postMessage).not.toHaveBeenCalled()
+    expect(requested.worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'compact', sessionFile: requested.poolKey, customInstructions: 'keep decisions',
+    }))
+  })
+
   it('sends abort only to the worker bound to the requested session', async () => {
     const foreground = fakeSlot(normalizeSessionKey('/sessions/a.jsonl'), true)
     const requested = fakeSlot(normalizeSessionKey('/sessions/b.jsonl'), true)

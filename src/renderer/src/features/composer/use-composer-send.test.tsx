@@ -85,15 +85,17 @@ function renderSender(input: string | HTMLDivElement) {
     onComposerBlur: vi.fn(),
     resetNav: vi.fn(),
   }
+  const clearEditor = vi.fn(() => { editor.textContent = '' })
   return {
     inputHistory,
     updateFromEditor,
+    clearEditor,
     ...renderHook(() => useComposerSend({
       editorRef: { current: editor },
       text,
       attachments: [],
       updateFromEditor,
-      clearEditor: vi.fn(),
+      clearEditor,
       setContent: vi.fn(),
       inputHistory,
       refreshCommands: vi.fn(async () => {}),
@@ -219,6 +221,40 @@ describe('useComposerSend submission arbitration', () => {
       }))
     },
   )
+
+  it.each(['send', 'steer', 'followUp'] as const)('executes a builtin before the %s prompt path using current editor text', async (mode) => {
+    const editor = createEditor('stale render text')
+    const { result, clearEditor } = renderSender(editor)
+    editor.textContent = '/compact keep decisions'
+    useUIStore.setState({ sessionRuntimeRunning: { 'C:/sessions/current.jsonl': mode !== 'send' } })
+    mocks.invoke.mockResolvedValue({ compacted: true })
+
+    await act(() => mode === 'send'
+      ? result.current.handleSend()
+      : result.current.sendCurrent({ queue: mode }))
+
+    expect(mocks.invoke).toHaveBeenCalledWith('session.compact', expect.objectContaining({
+      sessionFile: 'C:/sessions/current.jsonl', customInstructions: 'keep decisions',
+    }))
+    expect(mocks.invoke.mock.calls.some(([method]) => method.startsWith('prompt.'))).toBe(false)
+    expect(mocks.appendOptimistic).not.toHaveBeenCalled()
+    expect(clearEditor).toHaveBeenCalledOnce()
+  })
+
+  it('does not mistake a slash message with attachments for a builtin', async () => {
+    const editor = createEditor('')
+    renderRichFromSegments(editor, [
+      { type: 'text', text: '/compact ' },
+      { type: 'file', attachment: { path: '/example.ts', name: 'example.ts', kind: 'code' } },
+    ])
+    const { result } = renderSender(editor)
+
+    await act(() => result.current.handleSend())
+
+    expect(mocks.invoke).toHaveBeenCalledWith('prompt.send', expect.anything())
+    expect(mocks.invoke).not.toHaveBeenCalledWith('session.compact', expect.anything())
+  })
+
   it('sends the first prompt to a new session while another session is running', async () => {
     useUIStore.setState({
       currentSessionId: '__pending_new__',

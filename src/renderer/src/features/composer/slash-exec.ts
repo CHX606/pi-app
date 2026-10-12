@@ -4,6 +4,7 @@
 // - extension commands -> resolved via slash.resolve, notify/send to pi
 
 import { toast } from 'sonner'
+import { errorMessage } from '@shared/error-message'
 import i18n from '@renderer/lib/i18n'
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { useUIStore } from '@renderer/stores/ui-store'
@@ -19,8 +20,8 @@ const APP_BUILTIN = new Set([
 ])
 
 export function isExecutableBuiltin(input: string): boolean {
-  const m = input.match(/^\/(\w+)/)
-  return !!m && APP_BUILTIN.has(m[1])
+  const token = firstToken(input)
+  return !!token && APP_BUILTIN.has(token.slice(1))
 }
 
 export interface SlashExecContext {
@@ -43,7 +44,7 @@ export async function executeSlashCommand(
   input: string,
   ctx: SlashExecContext = {},
 ): Promise<boolean> {
-  const m = input.match(/^\/(\w+)\b *(.*)?$/)
+  const m = input.match(/^\/(\S+)(?:\s+([\s\S]*))?$/)
   if (!m) return false
   const cmd = m[1]
   const arg = (m[2] || '').trim()
@@ -130,11 +131,18 @@ export async function executeSlashCommand(
     }
     case 'compact': {
       try {
-        await ipcClient.invoke('session.compact', { sessionId: '' })
+        if (!store.historySessionFile) throw new Error(i18n.t('composer:noSessionToCompact'))
+        const result = await ipcClient.invoke('session.compact', {
+          sessionId: '',
+          sessionFile: store.historySessionFile,
+          workspaceId: store.currentWorkspace ?? undefined,
+          customInstructions: arg || undefined,
+        })
+        if (!result?.compacted) throw new Error(result?.error || i18n.t('composer:compactionFailed'))
         toast.success(i18n.t('composer:compactedHistory'))
       } catch (e) {
         console.error('/compact failed:', e)
-        toast.error('压缩失败')
+        toast.error(i18n.t('composer:compactionFailed'), { description: errorMessage(e) })
       }
       return true
     }
