@@ -1,4 +1,4 @@
-import { renderHook } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useComposerAttachments } from './use-composer-attachments'
 
@@ -55,6 +55,7 @@ function textClipboardData(plain: string, html = '') {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.useRealTimers()
   delete window.piDesktop
 })
 
@@ -76,13 +77,40 @@ describe('useComposerAttachments handlePaste', () => {
     expect(ev.preventDefault).not.toHaveBeenCalled()
   })
 
-  it('lets a rich (html+plain) paste through natively', () => {
-    const { handlePaste } = setup()
-    const ev = pasteEvent(textClipboardData('hello', '<div>hello</div>'))
+  it.each([
+    ['hello', '<div>hello</div>'],
+    ['  \n\n', '<div>  </div><div><br></div>'],
+    ['', '<p>rich</p>'],
+  ])('uses native plain-text editing only during an HTML text paste: %j', (plain, html) => {
+    vi.useFakeTimers()
+    const { handlePaste, editorRef, updateFromEditor } = setup()
+    const el = document.createElement('div')
+    el.contentEditable = 'true'
+    editorRef.current = el
+    const ev = pasteEvent(textClipboardData(plain, html))
 
     handlePaste(ev)
 
     expect(ev.preventDefault).not.toHaveBeenCalled()
+    expect(el.contentEditable).toBe('plaintext-only')
+    expect(el.innerHTML).toBe('')
+    expect(updateFromEditor).not.toHaveBeenCalled()
+    act(() => vi.runAllTimers())
+    expect(el.contentEditable).toBe('true')
+  })
+
+  it('does not re-enable an editor disabled before paste mode is restored', () => {
+    vi.useFakeTimers()
+    const { handlePaste, editorRef } = setup()
+    const el = document.createElement('div')
+    el.contentEditable = 'true'
+    editorRef.current = el
+
+    handlePaste(pasteEvent(textClipboardData('hello', '<div>hello</div>')))
+    el.contentEditable = 'false'
+    act(() => vi.runAllTimers())
+
+    expect(el.contentEditable).toBe('false')
   })
 
   it('lets an html-only paste through natively', () => {

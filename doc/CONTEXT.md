@@ -89,7 +89,7 @@ Trellis：`07-01-fmsm-remediate-a` 已归档 `archive/2026-07/`。威胁模型�
 
 ### 决策记录：纯文本粘贴走浏览器原生插入（2026）
 
-composer 曾对纯文本粘贴 `preventDefault` 后手动插 DOM——实测（真实 Chromium 回归脚本 `scripts/regression/composer-undo.mjs`）这会污染撤销栈：输入 "abc" 后粘贴 "hello world"，再 Ctrl+Z 会**清空整个输入**而非回到 "abc"。定案：**纯文本/富文本粘贴一律不拦截**（`useComposerAttachments.handlePaste` 只对文件/图片类 `preventDefault`），让浏览器原生插入保住撤销栈；富文本（Word/网页）来源的块级包装标签（div/p/li 等）由 `serializeRichInput` 按换行处理，不动 DOM 就不破坏撤销。**附件 chip 用 `execCommand('insertHTML')` 插入**（原生命令，可单独 Ctrl+Z 撤掉；jsdom 无 execCommand 时走手动兜底）。**Shift+Enter 同样改走原生**（不再手动插 br）。已知代价：图片+文字组合粘贴（chip+文本）仍为程序化插入，该组合的撤销不完美，属低频。
+composer 曾对纯文本粘贴 `preventDefault` 后手动插 DOM——实测（真实 Chromium 回归脚本 `scripts/regression/composer-undo.mjs`）这会污染撤销栈：输入 "abc" 后粘贴 "hello world"，再 Ctrl+Z 会**清空整个输入**而非回到 "abc"。定案：**文字粘贴交给浏览器原生插入**（`useComposerAttachments.handlePaste` 只对文件/图片类 `preventDefault`）。网页/Word 文字附带 HTML 时，仅在粘贴期间将编辑器切为 `contenteditable="plaintext-only"`，在下一个任务恢复富文本编辑；浏览器采用纯文本格式，保留日志缩进、实际空行和撤销栈，附件 chip 仍可正常插入。不得长期切为纯文本模式，也不得手动改写粘贴后的 DOM。GitHub Actions 日志 HTML 含大量源码缩进和换行，原样粘贴会被 `white-space: pre-wrap` 显示为额外空行，并进入发送文本；`scripts/regression/composer-undo.mjs` 使用真实粘贴 hook 和双格式剪贴板覆盖该问题、撤销/重做及附件旁的选区替换。**附件 chip 用 `execCommand('insertHTML')` 插入**（原生命令，可单独 Ctrl+Z 撤掉；jsdom 无 execCommand 时走手动兜底）。**Shift+Enter 同样改走原生**（不再手动插 br）。已知代价：图片+文字组合粘贴（chip+文本）仍为程序化插入，该组合的撤销不完美，属低频。
 
 ### 决策记录：换行文本沿用原生编辑表示（2026）
 
