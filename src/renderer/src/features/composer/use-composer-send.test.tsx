@@ -16,9 +16,9 @@ const mocks = vi.hoisted(() => ({
   bindOptimistic: vi.fn<(token: unknown, sessionFile: string | null) => void>(),
   clearOptimistic: vi.fn<(token: unknown) => boolean>(() => true),
   afterPromptSent: vi.fn<(bind?: unknown) => Promise<void>>(async () => {}),
-  cancelForSession: vi.fn(),
   turnActive: vi.fn(() => false),
   routeSlash: vi.fn(async () => ({ handled: false })),
+  cancelForSession: vi.fn(),
 }))
 
 vi.mock('react-i18next', async (importOriginal) => {
