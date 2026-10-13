@@ -40,15 +40,11 @@ export function clearSessionLeafOverride(sessionFile?: string | null): void {
   if (key) leafBySession.delete(key)
 }
 
-/** Once the SDK reports a settled run, JSONL's latest persisted leaf is authoritative again. */
-export function applySettledRunToSessionLeafOverride(event: AppEvent): void {
-  if (
-    event.type !== 'run' ||
-    (event.phase !== 'idle' && event.phase !== 'failed' && event.phase !== 'cancelled') ||
-    event.settled !== true ||
-    !event.sessionFile
-  ) {
-    return
-  }
-  clearSessionLeafOverride(event.sessionFile)
+/** A persisted prompt advances the rewound branch; subsequent rebinds must follow its live leaf. */
+export function applySessionEventToSessionLeafOverride(event: AppEvent): void {
+  if ((event.type !== 'message' && event.type !== 'run') || !event.sessionFile) return
+  const promptPersisted = event.type === 'message' && event.role === 'user' && event.phase === 'end'
+  const runSettled = event.type === 'run' && event.settled === true &&
+    (event.phase === 'idle' || event.phase === 'failed' || event.phase === 'cancelled')
+  if (promptPersisted || runSettled) clearSessionLeafOverride(event.sessionFile)
 }

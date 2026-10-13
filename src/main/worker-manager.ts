@@ -39,7 +39,7 @@ import { unlink } from 'node:fs/promises'
 import { createNewSessionInPool, nextWorkspacePoolKey } from './worker-manager-new-session'
 import { readSessionMetaFromFile, sessionFilePathForFs } from './session-file-meta'
 import {
-  applySettledRunToSessionLeafOverride,
+  applySessionEventToSessionLeafOverride,
   clearSessionLeafOverride,
   getSessionLeafOverride,
   setSessionLeafOverride,
@@ -341,7 +341,7 @@ export class WorkerManager {
       if (sessionFile && !base.sessionFile) base.sessionFile = sessionFile
       enriched = base as unknown as AppEvent
     }
-    applySettledRunToSessionLeafOverride(enriched)
+    applySessionEventToSessionLeafOverride(enriched)
     observeAppEventForCompletion(enriched)
     remoteTap.appEvent(enriched)
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
