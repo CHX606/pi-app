@@ -151,31 +151,50 @@ describe('R2 fork/clone remap the source worker', () => {
 })
 
 describe('R1 session binding commits only after a successful load', () => {
-  it('should_keep_original_identity_when_reused_worker_cancels_switch', async () => {
-    // Given: idle worker A is reusable for B, but the extension cancels the switch
-    const a = makeSlot('/sessions/a.jsonl', (message, reply) => {
+  it('should_keep_workspace_identity_when_initial_binding_fails', async () => {
+    const a = makeSlot(null, (message, reply) => {
       if (message.type === 'loadSession') reply({ requestId: message.requestId, type: 'error', error: 'SESSION_SWITCH_CANCELLED' })
       else normalReply(message, reply)
     })
     const { manager, state } = setup(a)
 
-    // When / Then: the error reaches the caller and A keeps its binding
     await expect(manager.ensureSessionWorker('/sessions/b.jsonl', '/workspace')).rejects.toThrow('SESSION_SWITCH_CANCELLED')
-    expect(state.pool.get(key('/sessions/a.jsonl'))).toBe(a)
+    expect(state.pool.get('ws:/workspace')).toBe(a)
     expect(state.pool.has(key('/sessions/b.jsonl'))).toBe(false)
-    expect(a.poolKey).toBe(key('/sessions/a.jsonl'))
-    expect(a.sessionFile).toBe(key('/sessions/a.jsonl'))
-    expect(state.foregroundPoolKey).toBe(key('/sessions/a.jsonl'))
+    expect(a.poolKey).toBe('ws:/workspace')
+    expect(a.sessionFile).toBeNull()
+    expect(state.foregroundPoolKey).toBe('ws:/workspace')
   })
 
-  it('should_commit_new_identity_and_foreground_when_reused_worker_loads', async () => {
-    const a = makeSlot('/sessions/a.jsonl', normalReply)
+  it('should_commit_session_identity_when_workspace_worker_loads', async () => {
+    const a = makeSlot(null, normalReply)
     const { manager, state } = setup(a)
     await manager.ensureSessionWorker('/sessions/b.jsonl', '/workspace')
     expect(state.pool.get(key('/sessions/b.jsonl'))).toBe(a)
-    expect(state.pool.has(key('/sessions/a.jsonl'))).toBe(false)
+    expect(state.pool.has('ws:/workspace')).toBe(false)
     expect(a.sessionFile).toBe(key('/sessions/b.jsonl'))
     expect(state.foregroundPoolKey).toBe(key('/sessions/b.jsonl'))
+  })
+
+  it('should_keep_idle_session_isolated_when_another_session_binds', async () => {
+    const a = makeSlot('/sessions/a.jsonl', normalReply)
+    const { manager, state } = setup(a)
+    mocks.fork.mockImplementation(async (_cwd: string, options?: { poolKey: string }) => ({
+      slot: makeSlot(options!.poolKey, normalReply),
+      init: Promise.resolve({ sessionId: 'b' }),
+    }))
+
+    await manager.ensureSessionWorker('/sessions/b.jsonl', '/workspace')
+    await manager.sendPrompt('hello B', '/sessions/b.jsonl')
+
+    expect(state.pool.get(key('/sessions/a.jsonl'))).toBe(a)
+    expect(a.sessionFile).toBe(key('/sessions/a.jsonl'))
+    expect(a.worker.postMessage).not.toHaveBeenCalled()
+    const b = state.pool.get(key('/sessions/b.jsonl'))!
+    expect(b).not.toBe(a)
+    expect(posted(b, 'prompt')).toEqual([
+      [expect.objectContaining({ text: 'hello B', sessionFile: key('/sessions/b.jsonl') })],
+    ])
   })
 
   it('should_propagate_error_when_existing_slot_fails_to_load', async () => {

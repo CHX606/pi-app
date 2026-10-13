@@ -41,6 +41,32 @@ describe('extension UI cancellation', () => {
     expect(useExtensionUIStore.getState().suspended).toBeNull()
   })
 
+  it.each([false, true])('cancels the visible session dialog in the worker when suspended=%s', (suspended) => {
+    const store = useExtensionUIStore.getState()
+    store.setActivePending({ ...pending, sessionFile: '/sessions/current.jsonl' })
+    if (suspended) store.suspendActive({})
+
+    store.cancelForSession('/sessions/current.jsonl')
+
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('extension.cancelUI', {
+      id: pending.id,
+      reason: 'user-abort',
+    })
+    expect(useExtensionUIStore.getState().activePending).toBeNull()
+    expect(useExtensionUIStore.getState().suspended).toBeNull()
+  })
+
+  it('keeps another session dialog when the visible session is stopped', () => {
+    const store = useExtensionUIStore.getState()
+    store.setActivePending({ ...pending, sessionFile: '/sessions/other.jsonl' })
+    store.suspendActive({})
+
+    store.cancelForSession('/sessions/current.jsonl')
+
+    expect(invoke).not.toHaveBeenCalled()
+    expect(useExtensionUIStore.getState().suspended?.requestId).toBe(pending.id)
+  })
+
   it('should_not_cancel_after_a_response_has_already_been_sent', () => {
     useExtensionUIStore.getState().setActivePending(pending)
 

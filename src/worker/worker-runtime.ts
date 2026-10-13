@@ -317,8 +317,8 @@ export async function switchOrLoadSession(
   leafOverride?: string | null,
 ): Promise<void> {
   const sdk = st.sdk!
-  if (!st.runtime) {
-    // Cold path: build runtime opened on this file
+  if (!st.runtime || !st.promptSent) {
+    // Initial binding opens the file directly; the blank startup session has no switch to guard.
     await disposeRuntimeOrSession()
     const agentDir = sdk.getAgentDir()
     const sm = sdk.SessionManager.open(sessionFile)

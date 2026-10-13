@@ -303,14 +303,14 @@ describe('WorkerManager session-worker reuse', () => {
     return slot
   }
 
-  it('reuses an idle same-cwd session worker instead of forking a new one', async () => {
+  it('reuses an unbound workspace worker for initial session binding', async () => {
     const manager = new WorkerManager()
     const internals = manager as unknown as {
       pool: Map<string, WorkerSlot>
       foregroundPoolKey: string | null
     }
     const cwd = '/w'
-    const sA = normalizeSessionKey('/w/session-a.jsonl')
+    const sA = workspacePoolKey(cwd)
     const sB = normalizeSessionKey('/w/session-b.jsonl')
     const slotA = boundSlot(sA, cwd)
     internals.pool.set(sA, slotA)
@@ -318,7 +318,7 @@ describe('WorkerManager session-worker reuse', () => {
 
     await manager.loadSession(sB, { cwd })
 
-    // pool 只保留一个 slot，且被 rekey 到新 session（没有 fork 新 worker）
+    // The prewarmed blank worker binds without borrowing another session's worker.
     expect(internals.pool.size).toBe(1)
     expect(internals.pool.has(sA)).toBe(false)
     expect(internals.pool.has(sB)).toBe(true)
