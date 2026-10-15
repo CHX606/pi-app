@@ -56,6 +56,79 @@ describe('session activity', () => {
     expect(mocks.switchSession).not.toHaveBeenCalled()
   })
 
+  it.each(['working', 'needs-you', 'done'] as const)('recovers a %s title from the session file after its worker disappears', async (attention) => {
+    const invoke = mocks.invoke.getMockImplementation()!
+    mocks.invoke.mockImplementation(async (channel, args) => channel === 'desktop.status'
+      ? { rss: 0, total: 0, workers: [] } : invoke(channel, args))
+    useUIStore.setState({ sessionAttention: { [file.replace(/\\/g, '/')]: attention } })
+
+    render(<StatusBar />)
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('desktop.status', {}))
+    expect(mocks.invoke.mock.calls.some(([channel]) => channel === 'session.prepare' || channel === 'session.list')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Session activity' }))
+    const row = await screen.findByRole('button', { name: /Background task/ })
+    expect(mocks.invoke).toHaveBeenCalledWith('session.prepare', { sessionFile: file.replace(/\\/g, '/'), bind: false })
+    expect(mocks.invoke).toHaveBeenCalledWith('session.list', { workspaceId: workspace, refresh: true })
+    expect(useUIStore.getState().sessions).toEqual([foreground])
+    expect(mocks.activate).not.toHaveBeenCalled()
+    expect(mocks.switchSession).not.toHaveBeenCalled()
+
+    fireEvent.click(row)
+    await waitFor(() => expect(mocks.activate).toHaveBeenCalledWith(workspace, { sessionId: session.sessionId, sessionFile: file }))
+  })
+
+  it('loads a title when a session without a worker enters the open activity list', async () => {
+    const invoke = mocks.invoke.getMockImplementation()!
+    mocks.invoke.mockImplementation(async (channel, args) => channel === 'desktop.status'
+      ? { rss: 0, total: 0, workers: [] } : invoke(channel, args))
+    useUIStore.setState({ sessionAttention: { [foreground.sessionFile]: 'working' } })
+
+    render(<StatusBar />)
+    fireEvent.click(screen.getByRole('button', { name: 'Session activity' }))
+    await screen.findByRole('button', { name: /Foreground task/ })
+    act(() => useUIStore.setState({ sessionAttention: { [foreground.sessionFile]: 'working', [file]: 'done' } }))
+    expect(await screen.findByRole('button', { name: /Background task/ })).toBeEnabled()
+    expect(useUIStore.getState().sessions).toEqual([foreground])
+  })
+
+  it('loads a shared project once for sessions without workers', async () => {
+    const siblingFile = file.replace('background.jsonl', 'sibling.jsonl')
+    const sibling = { ...session, sessionId: 'sibling', sessionFile: siblingFile, title: 'Sibling task' }
+    useUIStore.setState({ sessionAttention: { [file]: 'done', [siblingFile]: 'done' } })
+    mocks.invoke.mockImplementation(async (channel, args) => {
+      if (channel === 'desktop.status') return { rss: 0, total: 0, workers: [] }
+      if (channel === 'session.prepare') return { sessionId: args.sessionFile.includes('sibling') ? sibling.sessionId : session.sessionId, workspaceId: workspace }
+      if (channel === 'session.list') return { sessions: [session, sibling] }
+      return {}
+    })
+
+    render(<StatusBar />)
+    fireEvent.click(screen.getByRole('button', { name: 'Session activity' }))
+    expect(await screen.findByRole('button', { name: /Background task/ })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: /Sibling task/ })).toBeEnabled()
+    expect(mocks.invoke.mock.calls.filter(([channel]) => channel === 'session.list')).toHaveLength(1)
+    expect(useUIStore.getState().sessions).toEqual([foreground])
+  })
+
+  it.each(['fails', 'stalls'])('still loads a live session title when another session lookup %s', async (outcome) => {
+    const missingFile = '/sessions/missing.jsonl'
+    const invoke = mocks.invoke.getMockImplementation()!
+    useUIStore.setState({ sessionAttention: { [file]: 'working', [missingFile]: 'done' } })
+    mocks.invoke.mockImplementation(async (channel, args) => {
+      if (channel === 'session.prepare' && args.sessionFile === missingFile) {
+        if (outcome === 'stalls') return new Promise(() => {})
+        throw new Error('read failed')
+      }
+      return invoke(channel, args)
+    })
+
+    render(<StatusBar />)
+    fireEvent.click(screen.getByRole('button', { name: 'Session activity' }))
+    expect(await screen.findByRole('button', { name: /Background task/ })).toBeEnabled()
+    expect(mocks.invoke).toHaveBeenCalledWith('session.prepare', { sessionFile: missingFile, bind: false })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('opens an existing file even when it is absent from project lists and workers', async () => {
     const invoke = mocks.invoke.getMockImplementation()!
     mocks.invoke.mockImplementation(async (channel, args) => channel === 'session.list' ? { sessions: [] }
