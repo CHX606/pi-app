@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSession } from '@earendil-works/pi-coding-agent'
 import type { WorkerModelRuntime } from '../worker-runtime'
-import { handleNewsession, handleSetmodel, handleSetthinkinglevel } from './worker-handlers-session'
+import { handleCompact, handleNewsession, handleSetmodel, handleSetthinkinglevel } from './worker-handlers-session'
 import { st } from '../worker-runtime'
 
 const originalState = { ...st }
@@ -102,6 +102,52 @@ describe('handleNewsession', () => {
 
     expect(newSession).not.toHaveBeenCalled()
     expect(reply).toHaveBeenCalledWith({ type: 'error', error: 'SESSION_BUSY' })
+  })
+})
+
+describe('handleCompact', () => {
+  it('uses SDK compaction without prompting and replies only after it finishes', async () => {
+    let resolve!: (result: { tokensBefore: number; estimatedTokensAfter: number }) => void
+    const compact = vi.fn(() => new Promise((done) => { resolve = done }))
+    const prompt = vi.fn()
+    st.session = { sessionId: 'current', compact, prompt } as unknown as AgentSession
+    const reply = vi.fn()
+    const secondReply = vi.fn()
+
+    const pending = handleCompact({ customInstructions: 'keep decisions' }, reply)
+    await handleCompact({}, secondReply)
+
+    expect(compact).toHaveBeenCalledExactlyOnceWith('keep decisions')
+    expect(prompt).not.toHaveBeenCalled()
+    expect(reply).not.toHaveBeenCalled()
+    expect(secondReply).toHaveBeenCalledWith({ type: 'error', error: 'COMPACTION_BUSY' })
+    resolve({ tokensBefore: 1000, estimatedTokensAfter: 200 })
+    await pending
+    expect(reply).toHaveBeenCalledWith({ type: 'compact-done', sessionId: 'current', tokensSaved: 800 })
+  })
+
+  it('propagates SDK failure and allows another compaction attempt', async () => {
+    const compact = vi.fn().mockRejectedValueOnce(new Error('Nothing to compact'))
+      .mockResolvedValueOnce({ tokensBefore: 1000 })
+    st.session = { sessionId: 'current', compact } as unknown as AgentSession
+    const reply = vi.fn()
+
+    await handleCompact({}, reply)
+    expect(reply).toHaveBeenCalledWith({ type: 'error', error: 'Nothing to compact' })
+    reply.mockClear()
+    await handleCompact({}, reply)
+    expect(reply).toHaveBeenCalledWith({ type: 'compact-done', sessionId: 'current', tokensSaved: 0 })
+  })
+
+  it('does not interrupt an ongoing automatic compaction', async () => {
+    const compact = vi.fn()
+    st.session = { isCompacting: true, compact } as unknown as AgentSession
+    const reply = vi.fn()
+
+    await handleCompact({}, reply)
+
+    expect(compact).not.toHaveBeenCalled()
+    expect(reply).toHaveBeenCalledWith({ type: 'error', error: 'COMPACTION_BUSY' })
   })
 })
 

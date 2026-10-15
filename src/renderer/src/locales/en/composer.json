@@ -156,6 +156,8 @@
   "switchThinkingFailed": "Failed to switch thinking",
   "timelineCleared": "Timeline cleared",
   "compactedHistory": "Session history compacted",
+  "compactionFailed": "Compaction failed",
+  "noSessionToCompact": "No session to compact",
   "thinkingMax": "Max",
   "thinkingPicker": {
     "title": "Thinking level",

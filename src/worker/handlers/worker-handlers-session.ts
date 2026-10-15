@@ -466,6 +466,33 @@ export async function handleGetforkmessages(_msg: WorkerIncomingMessage, reply: 
 }
 
 
+let manualCompactionInFlight = false
+
+export async function handleCompact(msg: WorkerIncomingMessage, reply: WorkerReply): Promise<void> {
+  const session = st.session
+  if (!session) {
+    reply({ type: 'error', error: 'No session' })
+    return
+  }
+  if (manualCompactionInFlight || session.isCompacting) {
+    reply({ type: 'error', error: 'COMPACTION_BUSY' })
+    return
+  }
+  manualCompactionInFlight = true
+  try {
+    const result = await session.compact(msg.customInstructions)
+    reply({
+      type: 'compact-done',
+      sessionId: session.sessionId,
+      tokensSaved: Math.max(0, result.tokensBefore - (result.estimatedTokensAfter ?? result.tokensBefore)),
+    })
+  } catch (e: unknown) {
+    reply({ type: 'error', error: errorMessage(e) })
+  } finally {
+    manualCompactionInFlight = false
+  }
+}
+
 export async function handleRunextensioncommand(msg: WorkerIncomingMessage, reply: WorkerReply): Promise<void> {
         if (!st.session) { reply({ type: 'error', error: 'No st.session' }); return }
         const text = String(msg.text || '').trim()

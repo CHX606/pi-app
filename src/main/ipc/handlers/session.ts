@@ -25,6 +25,7 @@ import type { SessionOnDiskRow } from '../sdk-session'
 import type { PiSessionMessage } from '@shared/worker-message'
 import { registerHandler, registerHandlerWithSchema } from '../registry'
 import {
+  sessionCompactSchema,
   sessionDeleteSchema,
   sessionExportSchema,
   sessionGetMessagesSchema,
@@ -610,13 +611,14 @@ export function registerSessionHandlers(): void {
     return { ok: true, currentProject: configStore.get('currentProject') }
   })
 
-  registerHandler('ipc:session.compact', async () => {
+  registerHandlerWithSchema('ipc:session.compact', sessionCompactSchema, async (req) => {
     try {
-      if (!workerManager.isRunning) {
-        return { sessionId: '', compacted: false, tokensSaved: 0, error: 'worker_not_ready' }
+      const authorized = await authorizeTrustedSessionFile(req.workspaceId, req.sessionFile)
+      if (!authorized.ok) {
+        return { sessionId: '', compacted: false, tokensSaved: 0, error: authorized.error }
       }
-      await workerManager.runExtensionCommand('/compact')
-      return { sessionId: '', compacted: true, tokensSaved: 0 }
+      const result = await workerManager.compactSession(authorized.sessionFile, req.customInstructions)
+      return { ...result, compacted: true }
     } catch (e: unknown) {
       return { sessionId: '', compacted: false, tokensSaved: 0, error: errorMessage(e) }
     }

@@ -156,6 +156,8 @@
   "switchThinkingFailed": "切换 thinking 失败",
   "timelineCleared": "已清空时间线",
   "compactedHistory": "已压缩会话历史",
+  "compactionFailed": "压缩失败",
+  "noSessionToCompact": "当前没有可压缩的会话",
   "thinkingMax": "Max",
   "thinkingPicker": {
     "title": "思考等级",

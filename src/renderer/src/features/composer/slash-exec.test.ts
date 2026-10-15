@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { useExtensionUIStore } from '@renderer/stores/extension-ui-store'
-import { executeSlashCommand } from './slash-exec'
+import { executeSlashCommand, isExecutableBuiltin } from './slash-exec'
+import { toast } from 'sonner'
 import { clearAvailableModelsCacheForTests } from '@renderer/lib/available-models-cache'
 
 vi.mock('@renderer/lib/ipc-client', () => ({
@@ -15,6 +16,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 const invoke = vi.mocked(ipcClient.invoke)
 
 beforeEach(() => {
+  vi.clearAllMocks()
   invoke.mockReset()
   clearAvailableModelsCacheForTests()
   useUIStore.setState({
@@ -45,6 +47,51 @@ describe('/new session reset', () => {
       sessionFile: null,
       status: 'idle',
     })
+  })
+})
+
+describe('/compact runtime confirmation', () => {
+  it('compacts the viewed session with summary instructions and waits for completion', async () => {
+    let resolve!: (value: unknown) => void
+    invoke.mockReturnValue(new Promise((done) => { resolve = done }))
+
+    const execution = executeSlashCommand('/compact preserve decisions\nand next steps')
+
+    expect(invoke).toHaveBeenCalledWith('session.compact', {
+      sessionId: '',
+      sessionFile: 'C:/sessions/current.jsonl',
+      workspaceId: 'C:/workspace',
+      customInstructions: 'preserve decisions\nand next steps',
+    })
+    expect(toast.success).not.toHaveBeenCalled()
+    resolve({ compacted: true, tokensSaved: 100 })
+    expect(await execution).toBe(true)
+    expect(toast.success).toHaveBeenCalledOnce()
+  })
+
+  it('reports a failed response without claiming success', async () => {
+    invoke.mockResolvedValue({ compacted: false, error: 'Nothing to compact' })
+
+    expect(await executeSlashCommand('/compact')).toBe(true)
+
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith(expect.any(String), { description: 'Nothing to compact' })
+  })
+
+  it('does not compact another session from an empty draft', async () => {
+    useUIStore.setState({ historySessionFile: null })
+
+    expect(await executeSlashCommand('/compact')).toBe(true)
+
+    expect(invoke).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledOnce()
+  })
+
+  it.each(['/compact-more', '/compact:custom', '/model-other'])('preserves extension command %s', async (command) => {
+    expect(isExecutableBuiltin(command)).toBe(false)
+    expect(await executeSlashCommand(command)).toBe(false)
+    expect(invoke).not.toHaveBeenCalled()
   })
 })
 

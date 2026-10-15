@@ -33,7 +33,6 @@ export function useComposerSend(opts: {
   const {
     editorRef,
     text,
-    attachments,
     updateFromEditor,
     clearEditor,
     setContent,
@@ -58,11 +57,24 @@ export function useComposerSend(opts: {
         const el = editorRef.current
         if (!el) return
         const { displayText, payload, attachments: atts, segments } = serializeRichInput(el)
-        if (!displayText.trim() && atts.length === 0) return
-        const draft = useUIStore.getState().ephemeralSandboxDraft
-        const currentWorkspace = useUIStore.getState().currentWorkspace
-        if (!currentWorkspace && !draft) return
+        const trimmed = displayText.trim()
+        if (!trimmed && atts.length === 0) return
         const store = useUIStore.getState()
+        if (atts.length === 0 && isExecutableBuiltin(trimmed)) {
+          clearEditor()
+          await executeSlashCommand(trimmed, { refreshCommands })
+          return
+        }
+        if (trimmed.startsWith('/')) {
+          const routed = await routeDesktopSlashBeforeSend(trimmed)
+          if (routed.handled) {
+            clearEditor()
+            return
+          }
+        }
+        const draft = store.ephemeralSandboxDraft
+        const currentWorkspace = store.currentWorkspace
+        if (!currentWorkspace && !draft) return
         let sessionFile = store.historySessionFile ?? undefined
         const { composerTurnActive } = await import('@renderer/lib/session-worker-sync')
         const running = composerTurnActive({
@@ -95,11 +107,7 @@ export function useComposerSend(opts: {
           promptAccepted = true
           return bind
         }
-        const pendMsg = displayText.trim()
-        if (pendMsg.startsWith('/')) {
-          const routed = await routeDesktopSlashBeforeSend(pendMsg)
-          if (routed.handled) return
-        }
+        const pendMsg = trimmed
         try {
           const { afterPromptSent } = await import('@renderer/lib/after-prompt-sent')
           if (!running && draft) {
@@ -186,41 +194,13 @@ export function useComposerSend(opts: {
         sendingRef.current = false
       }
     },
-    [editorRef, inputHistory, t, updateFromEditor],
+    [clearEditor, editorRef, inputHistory, refreshCommands, t, updateFromEditor],
   )
 
-  const handleSend = useCallback(async () => {
-    if (extensionUiBlocksComposer()) {
-      toast.message(t('composer:toast.completeExtensionFirst'))
-      return
-    }
-    const trimmed = text.trim()
-    if (!trimmed && attachments.length === 0) return
-    if (attachments.length === 0 && trimmed.startsWith('/') && isExecutableBuiltin(trimmed)) {
-      const handled = await executeSlashCommand(trimmed, { refreshCommands })
-      if (handled) {
-        clearEditor()
-        return
-      }
-    }
-    if (trimmed.startsWith('/')) {
-      const routed = await routeDesktopSlashBeforeSend(trimmed)
-      if (routed.handled) {
-        clearEditor()
-        return
-      }
-    }
-    await sendCurrent(showComposerStop || isRunning ? { queue: 'steer' } : undefined)
-  }, [
-    attachments.length,
-    clearEditor,
-    isRunning,
-    refreshCommands,
-    sendCurrent,
-    showComposerStop,
-    t,
-    text,
-  ])
+  const handleSend = useCallback(
+    () => sendCurrent(showComposerStop || isRunning ? { queue: 'steer' } : undefined),
+    [isRunning, sendCurrent, showComposerStop],
+  )
 
   const runComposerAbort = useCallback(
     async (currentText: string) => {

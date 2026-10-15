@@ -34,6 +34,7 @@ const dispatch: Record<string, (msg: WorkerIncomingMessage, reply: WorkerReply) 
   'fork': Session.handleFork,
   'clone': Session.handleClone,
   'getForkMessages': Session.handleGetforkmessages,
+  'compact': Session.handleCompact,
   'runExtensionCommand': Session.handleRunextensioncommand,
   'getMessages': Session.handleGetmessages,
   'reloadModels': Catalog.handleReloadmodels,

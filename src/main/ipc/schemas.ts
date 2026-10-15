@@ -42,6 +42,13 @@ export const workspaceFsCreateSchema = z.object({
   isDirectory: z.boolean().optional(),
 })
 
+export const sessionCompactSchema = z.object({
+  sessionId: z.string().optional(),
+  sessionFile: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1).optional(),
+  customInstructions: z.string().optional(),
+}).strict()
+
 export const sessionExportSchema = z.object({
   format: z.enum(['json', 'markdown', 'html']).optional(),
   sessionFile: z.string().optional(),

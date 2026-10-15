@@ -15,7 +15,7 @@ export function useComposerSlash(
   applySegmentsChange: (next: Segment[]) => void,
   currentSegments: () => Segment[],
 ) {
-  const [commands, setCommands] = useState<SlashCommand[]>([])
+  const [commands, setCommands] = useState<SlashCommand[]>(BUILTIN_COMMANDS)
   const [commandsSource, setCommandsSource] = useState<'worker' | 'fallback' | null>(null)
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [argCompletions, setArgCompletions] = useState<{ label: string; description?: string }[]>([])

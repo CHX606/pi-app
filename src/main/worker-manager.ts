@@ -1020,6 +1020,11 @@ export class WorkerManager {
       sessionMeta: r.sessionMeta as { model?: string; thinkingLevel?: string } | undefined,
     }
   }
+  async compactSession(sessionFile: string, customInstructions?: string): Promise<{ sessionId: string; tokensSaved: number }> {
+    const r = await this.request('compact', { sessionFile, customInstructions })
+    return { sessionId: String(r.sessionId ?? ''), tokensSaved: Number(r.tokensSaved ?? 0) }
+  }
+
   async runExtensionCommand(text: string): Promise<void> {
     await this.request('runExtensionCommand', { text })
   }
