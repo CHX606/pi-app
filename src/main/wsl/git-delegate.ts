@@ -33,7 +33,7 @@ export function runGitInWsl(
     return { status: -1, stdout: '', stderr: `invalid wsl distro: ${String(distro)}` }
   }
   const wslCwd = windowsPathToWsl(distro, winCwd) || '/'
-  return runWslSync(['-d', distro, '--cd', wslCwd, '--', 'git', ...args], {
+  return runWslSync(['-d', distro, '--cd', wslCwd, '--exec', 'git', ...args], {
     timeout: opts.timeout,
     input: opts.input,
   })

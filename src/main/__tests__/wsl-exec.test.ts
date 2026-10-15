@@ -18,6 +18,7 @@ import {
   runWslSync,
   runWslAsync,
   runWslDistroCdSync,
+  runWslDistroCdAsync,
   wslDefaultShellSync,
   wslHomeDirSync,
   invalidateWslEnvCaches,
@@ -163,6 +164,32 @@ describe('runWslDistroCdSync', () => {
     const r = runWslDistroCdSync('bad;name', '/', ['true'])
     expect(r.status).toBe(-1)
     expect(mocks.execFileSync).not.toHaveBeenCalled()
+  })
+})
+
+describe('runWslDistroCdAsync', () => {
+  it('bypasses the shell for git branch formats and preserves NUL-separated output', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough
+      stderr: PassThrough
+    }
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    mocks.spawn.mockReturnValue(child)
+    const format = '--format=%(refname)%00%(objectname:short)%00%(committerdate:unix)%00%(upstream:short)%00%(worktreepath)%00%(HEAD)'
+    const output = 'refs/heads/main\u0000abc1234\u0000123\u0000\u0000/home/u/my project\u0000*\n'
+
+    const result = runWslDistroCdAsync('Ubuntu', '/home/u/my project', [
+      'git', '--no-optional-locks', 'for-each-ref', format, 'refs/heads', 'refs/remotes',
+    ])
+    child.stdout.write(Buffer.from(output))
+    child.emit('close', 0)
+
+    expect(mocks.spawn).toHaveBeenLastCalledWith('wsl.exe', [
+      '-d', 'Ubuntu', '--cd', '/home/u/my project', '--exec',
+      'git', '--no-optional-locks', 'for-each-ref', format, 'refs/heads', 'refs/remotes',
+    ], expect.anything())
+    await expect(result).resolves.toEqual({ status: 0, stdout: output, stderr: '' })
   })
 })
 

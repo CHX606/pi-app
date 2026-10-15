@@ -222,7 +222,8 @@ export function runWslDistroCdAsync(
   if (!isValidWslDistroName(distro)) {
     return Promise.resolve({ status: -1, stdout: '', stderr: `invalid wsl distro: ${String(distro)}` })
   }
-  return runWslAsync(['-d', distro, '--cd', wslCwd, '--', ...args], opts)
+  // Bypass the default shell so arguments such as git's %(refname) stay literal.
+  return runWslAsync(['-d', distro, '--cd', wslCwd, '--exec', ...args], opts)
 }
 
 /** WSL home directory (e.g. `/home/user`). Returns null when the distro is unusable. */

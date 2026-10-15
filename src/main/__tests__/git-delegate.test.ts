@@ -36,7 +36,7 @@ describe('runGitInWsl', () => {
     expect(result).toEqual({ status: 0, stdout: 'ok', stderr: '' })
     expect(mocks.runWslSync).toHaveBeenCalledTimes(1)
     expect(mocks.runWslSync).toHaveBeenCalledWith(
-      ['-d', 'Ubuntu', '--cd', '/mnt/c/project', '--', 'git', 'status', '--porcelain', '-b'],
+      ['-d', 'Ubuntu', '--cd', '/mnt/c/project', '--exec', 'git', 'status', '--porcelain', '-b'],
       { timeout: 5000, input: undefined },
     )
   })
@@ -44,7 +44,7 @@ describe('runGitInWsl', () => {
   it('translates a WSL UNC path to its native form', () => {
     runGitInWsl('Ubuntu', '\\\\wsl.localhost\\Ubuntu\\home\\u\\proj', ['diff'])
     expect(mocks.runWslSync).toHaveBeenCalledWith(
-      ['-d', 'Ubuntu', '--cd', '/home/u/proj', '--', 'git', 'diff'],
+      ['-d', 'Ubuntu', '--cd', '/home/u/proj', '--exec', 'git', 'diff'],
       expect.anything(),
     )
   })
@@ -52,7 +52,7 @@ describe('runGitInWsl', () => {
   it('forwards input (stdin) for apply/commit style commands', () => {
     runGitInWsl('Ubuntu', 'D:\\repo', ['apply', '--cached', '--recount'], { input: 'patch' })
     expect(mocks.runWslSync).toHaveBeenCalledWith(
-      ['-d', 'Ubuntu', '--cd', '/mnt/d/repo', '--', 'git', 'apply', '--cached', '--recount'],
+      ['-d', 'Ubuntu', '--cd', '/mnt/d/repo', '--exec', 'git', 'apply', '--cached', '--recount'],
       { timeout: undefined, input: 'patch' },
     )
   })
