@@ -9,10 +9,9 @@
  * Ctrl+Z wipes the WHOLE editor content, including text typed before the
  * paste. See doc/CONTEXT.md「composer 撤销」decision record.
  *
- * This harness loads the real RichInput and composer DOM helpers, with these paste policies:
- *   - `--policy=native` (default, the fixed app behavior): text-only pastes go
- *     through the browser untouched (undoable); file/image pastes are
- *     intercepted and inserted via `execCommand('insertHTML')` (undoable chips).
+ * This harness loads the real RichInput, attachment hook and composer DOM helpers:
+ *   - `--policy=native` (default): text pastes use the browser's plain-text
+ *     editing mode (undoable); file/image pastes use the real attachment hook.
  *   - `--policy=manual` (the old, broken behavior): every paste is
  *     preventDefault'ed and inserted with manual DOM mutation.
  * It then asserts the undo/redo guarantees. It is not wired into CI because it
@@ -27,22 +26,44 @@ import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 
+const policy = process.argv.includes('--policy=manual') ? 'manual' : 'native'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const editorBundle = await build({
   stdin: {
     contents: `
-      import { createElement } from 'react'
+      import { createElement, useRef } from 'react'
       import { createRoot } from 'react-dom/client'
       import { flushSync } from 'react-dom'
       import { RichInput } from './src/renderer/src/features/composer/rich-input'
       import { insertTextAtCursor } from './src/renderer/src/features/composer/composer-editor-caret'
       import { insertAttachmentAtCursor, renderRichTextFromPlain, renderRichFromSegments, serializeRichInput, placeCaretAtEnd } from './src/renderer/src/features/composer/attachments'
-      Object.assign(window, { insertTextAtCursor, insertAttachmentAtCursor, renderRichTextFromPlain, renderRichFromSegments, serializeRichInput, placeCaretAtEnd })
-      flushSync(() => createRoot(document.getElementById('root')).render(createElement(RichInput, {
-        ref: el => { if (el) el.id = 'input' },
-        placeholder: 'Message or / command',
-        onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) e.preventDefault() },
-      })))
+      import { useComposerAttachments } from './src/renderer/src/features/composer/use-composer-attachments'
+      Object.assign(window, {
+        insertTextAtCursor, insertAttachmentAtCursor, renderRichTextFromPlain, renderRichFromSegments, serializeRichInput, placeCaretAtEnd,
+        insertChipAtCursor: el => insertAttachmentAtCursor(el, { path: '/x', name: '[chip]', kind: 'file' }),
+      })
+      function Editor() {
+        const editorRef = useRef(null)
+        const dragDepth = useRef(0)
+        const { handlePaste } = useComposerAttachments({
+          editorRef, dragDepth, updateFromEditor: () => {}, canCompose: true, canSendMessages: true,
+          currentWorkspace: '/workspace', ephemeralSandboxDraft: false, setIsDragActive: () => {},
+        })
+        const onPaste = ${JSON.stringify(policy)} === 'manual' ? e => {
+          const plain = e.clipboardData.getData('text/plain')
+          if (plain) {
+            e.preventDefault()
+            insertTextAtCursor(editorRef.current, plain)
+          }
+        } : handlePaste
+        return createElement(RichInput, {
+          ref: el => { editorRef.current = el; if (el) el.id = 'input' },
+          placeholder: 'Message or / command',
+          onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) e.preventDefault() },
+          onPaste,
+        })
+      }
+      flushSync(() => createRoot(document.getElementById('root')).render(createElement(Editor)))
     `,
     resolveDir: root,
     loader: 'tsx',
@@ -55,36 +76,6 @@ const editorBundle = await build({
   define: { 'process.env.NODE_ENV': '"development"' },
 })
 
-const policy = process.argv.includes('--policy=manual') ? 'manual' : 'native'
-
-const INSERT_TEXT = `
-function insertChipAtCursor(el) {
-  insertAttachmentAtCursor(el, { path: '/x', name: '[chip]', kind: 'file' })
-}
-function mirrorPolicy() {
-  document.addEventListener('paste', (e) => {
-    const cd = e.clipboardData
-    if (!cd) return
-    const plain = cd.getData('text/plain') || ''
-    const meaningful = plain.replace(/[\\u200B\\u00a0\\s]/g, '').length > 0
-    const hasFiles = Array.from(cd.items || []).some((it) => it.kind === 'file')
-    if (POLICY === 'manual') {
-      if (meaningful) {
-        e.preventDefault()
-        insertTextAtCursor(document.getElementById('input'), plain)
-      }
-      return
-    }
-    // native (fixed) policy: pure text pastes are NOT intercepted.
-    if (!hasFiles && meaningful) return
-    if (hasFiles) {
-      e.preventDefault()
-      insertChipAtCursor(document.getElementById('input'))
-    }
-  })
-}
-`
-
 const PAGE = `<!doctype html>
 <html><head><style>
   #input { position: relative; white-space: pre-wrap; word-break: break-word; min-height: 2.5rem; max-height: 112px; overflow-y: auto; font-size: 14px; line-height: 1.55; outline: none; }
@@ -93,11 +84,6 @@ const PAGE = `<!doctype html>
 <body>
   <div id="root"></div>
   <script>${editorBundle.outputFiles[0].text}</script>
-  <script>
-    const POLICY = ${JSON.stringify(policy)}
-    ${INSERT_TEXT}
-    mirrorPolicy()
-  </script>
 </body></html>`
 
 const server = http.createServer((req, res) => {
@@ -121,9 +107,15 @@ async function text(page) {
 async function ctrlZ(page, n = 1) { for (let i = 0; i < n; i++) { await page.keyboard.press('Control+z'); await sleep(40) } }
 async function ctrlY(page, n = 1) { for (let i = 0; i < n; i++) { await page.keyboard.press('Control+y'); await sleep(40) } }
 async function typeSlow(page, t) { for (const ch of t) { await page.keyboard.type(ch); await sleep(120) } }
-async function pasteText(page, txt) {
+async function pasteText(page, txt, html) {
   // 真实剪贴板 + 键盘触发：原生插入只对 trusted paste 生效（合成 ClipboardEvent 会被忽略）。
-  await page.evaluate((t) => navigator.clipboard.writeText(t), txt)
+  await page.evaluate(async ({ txt, html }) => {
+    if (html === undefined) return navigator.clipboard.writeText(txt)
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/plain': new Blob([txt], { type: 'text/plain' }),
+      'text/html': new Blob([html], { type: 'text/html' }),
+    })])
+  }, { txt, html })
   await page.keyboard.press('Control+v')
   await sleep(80)
 }
@@ -173,6 +165,61 @@ await scenario('multi-line paste into text keeps undo granularity', async (page)
   check('after Ctrl+Z (only paste undone)', await text(page), 'prefix ')
   await ctrlZ(page)
   check('after Ctrl+Z x2 (typing undone)', await text(page), '')
+})
+
+await scenario('GitHub log HTML must paste as plain text with native undo/redo', async (page) => {
+  const log = 'build started\n  compiling sources\n\nbuild complete'
+  const html = `<div class="js-check-step-line CheckStep-line d-flex">
+    <div></div>
+    <span class="CheckStep-line-content">
+      <span>build started</span>
+    </span>
+  </div>
+  <div><div></div><span><span>  compiling sources</span></span></div>
+  <div><div></div><span><br></span></div>
+  <div><div></div><span><span>build complete</span></span></div>`
+  await typeSlow(page, 'prefix ')
+  await sleep(300)
+  await pasteText(page, log, html)
+  check('visible log preserves indentation and intentional blank lines', await text(page), `prefix ${log}`)
+  check('serialized log matches plain clipboard text', await page.$eval('#input', el => serializeRichInput(el).displayText), `prefix ${log}`)
+  check('webpage wrappers are absent', await page.locator('#input span, #input div').count(), 0)
+  check('rich editing is restored', await page.$eval('#input', el => el.contentEditable), 'true')
+  await ctrlZ(page)
+  check('undo preserves text typed before the HTML paste', await text(page), 'prefix ')
+  await ctrlY(page)
+  check('redo restores the plain log', await text(page), `prefix ${log}`)
+  await page.evaluate(() => insertChipAtCursor(document.getElementById('input')))
+  check('attachment insertion still works after HTML paste', await page.locator('.rich-attachment-chip').count(), 1)
+  await ctrlZ(page)
+  check('undo removes only the attachment', await text(page), `prefix ${log}`)
+})
+
+await scenario('HTML paste replaces a selection beside an existing attachment', async (page) => {
+  await typeSlow(page, 'before ')
+  await page.evaluate(() => insertChipAtCursor(document.getElementById('input')))
+  await typeSlow(page, ' replace me')
+  const beforePaste = await text(page)
+  await page.keyboard.press('Shift+Home')
+  // Select only the suffix, leaving the attachment outside the pasted range.
+  await page.evaluate(() => {
+    const el = document.getElementById('input')
+    const suffix = el.lastChild
+    const range = document.createRange()
+    range.setStart(suffix, suffix.textContent.indexOf('replace me'))
+    range.setEnd(suffix, suffix.textContent.length)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  })
+  await pasteText(page, 'line1\nline2', '<div>line1</div>\n  <div>line2</div>')
+  check('existing attachment survives the paste', await page.locator('.rich-attachment-chip').count(), 1)
+  check('selection is replaced with the plain text', await text(page), beforePaste.replace('replace me', 'line1\nline2'))
+  await ctrlZ(page)
+  check('undo restores the selected suffix and attachment', await text(page), beforePaste)
+  check('existing attachment survives undo', await page.locator('.rich-attachment-chip').count(), 1)
+  await ctrlY(page)
+  check('redo restores the replacement', await text(page), beforePaste.replace('replace me', 'line1\nline2'))
 })
 
 await scenario('chip insert must be undoable without wiping text', async (page) => {

@@ -145,19 +145,20 @@ export function useComposerAttachments(opts: {
       const plain = cd.getData('text/plain')
       const meaningfulPlain = isMeaningfulPlainPaste(plain)
       const hasFilesOrImages = metas.length > 0 || !!pendingScreenshot || !!htmlImage
-      const stripHtmlOnly =
-        !!html.trim() && !meaningfulPlain && !hasFilesOrImages
-
-      // 纯文本粘贴（含富文本来源）：不拦截、不 preventDefault，让浏览器原生插入——
-      // 手动 DOM 插入 / JS execCommand 会污染 contenteditable 的原生撤销栈，
-      // 此后 Ctrl+Z 会把整个输入清空（含粘贴前输入的内容）。原生插入可正常撤销/重做；
-      // 富文本来源的包装标签由 serializeRichInput 的块级换行处理兜底。
-      if (!hasFilesOrImages && (meaningfulPlain || stripHtmlOnly)) {
+      if (!hasFilesOrImages) {
+        const el = editorRef.current
+        if (el && html && el.contentEditable === 'true') {
+          // Use the browser's plain-text paste to discard webpage HTML whitespace without
+          // touching content or the undo stack. Restore rich editing in the next task, after
+          // the default paste action, so attachment chips remain supported.
+          el.contentEditable = 'plaintext-only'
+          window.setTimeout(() => {
+            if (el.contentEditable === 'plaintext-only') el.contentEditable = 'true'
+          }, 0)
+        }
         return
       }
-      if (hasFilesOrImages) {
-        e.preventDefault()
-      }
+      e.preventDefault()
 
       const insertPlainAfter = () => {
         if (!meaningfulPlain) return
