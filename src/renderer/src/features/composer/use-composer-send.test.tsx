@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   afterPromptSent: vi.fn<(bind?: unknown) => Promise<void>>(async () => {}),
   turnActive: vi.fn(() => false),
   routeSlash: vi.fn(async () => ({ handled: false })),
+  cancelForSession: vi.fn(),
 }))
 
 vi.mock('react-i18next', async (importOriginal) => {
@@ -61,6 +62,7 @@ vi.mock('@renderer/lib/composer-abort', () => ({
 
 vi.mock('@renderer/stores/extension-ui-store', () => ({
   extensionUiBlocksComposer: () => false,
+  useExtensionUIStore: { getState: () => ({ cancelForSession: mocks.cancelForSession }) },
 }))
 
 vi.mock('./delayed-tooltip', () => ({ hideAllDelayedTooltips: vi.fn(), wireDelayedTooltip: vi.fn() }))
@@ -140,6 +142,17 @@ describe('useComposerSend submission arbitration', () => {
       sessionsWorkspace: 'D:/workspace',
       runState: { status: 'idle', model: 'openai/test-model', thinkingLevel: 'high', toolCount: 0, errorCount: 0 },
     })
+  })
+
+  it('notifies the extension to cancel before aborting the visible session', async () => {
+    const { result } = renderSender('')
+    const { abortAgentTurn } = await import('@renderer/lib/composer-abort')
+
+    await act(async () => { await result.current.runComposerAbort('') })
+
+    expect(mocks.cancelForSession).toHaveBeenCalledWith('C:/sessions/current.jsonl')
+    expect(mocks.cancelForSession.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(abortAgentTurn).mock.invocationCallOrder[0])
   })
 
   it('should_send_only_once_when_submit_reenters_before_editor_clear', async () => {

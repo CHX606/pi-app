@@ -29,6 +29,7 @@ type ExtensionUIState = {
   suspendActive: (meta: { toolCallId?: string; toolName?: string; timelineItemId?: string; background?: boolean }) => void
   resumeSuspended: () => void
   clearAfterRespond: () => void
+  cancelForSession: (sessionFile: string | null) => void
   clearAllDialogs: () => void
   dismissById: (id: string) => void
   parkForSessionSwitch: () => void
@@ -124,6 +125,17 @@ export const useExtensionUIStore = create<ExtensionUIState>((set, get) => ({
         : null
     if (!keep) syncWaitingUi(pendingSessionFile(suspended?.pending), false)
     set({ activePending: null, suspended: keep })
+  },
+
+  cancelForSession: (sessionFile) => {
+    const { activePending, suspended } = get()
+    const pending = [activePending, suspended?.pending].filter(
+      (p): p is ExtensionUIPending => !!p && (!p.sessionFile || sessionFilesEqual(p.sessionFile, sessionFile)),
+    )
+    for (const id of new Set(pending.map((p) => p.id))) {
+      void ipcClient.invoke('extension.cancelUI', { id, reason: 'user-abort' }).catch(() => {})
+      get().dismissById(id)
+    }
   },
 
   pruneStaleSuspension: () => pruneStaleSuspension(),

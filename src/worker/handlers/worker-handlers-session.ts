@@ -149,7 +149,8 @@ export async function handleListsessions(msg: WorkerIncomingMessage, reply: Work
 
 
 function applyLeafOverrideToLiveSession(leafId: string | null | undefined): void {
-  if (leafId === undefined || !st.session) return
+  // Rebinding a running session must not discard its newly appended prompt or tool results.
+  if (leafId === undefined || !st.session || isSessionBusy()) return
   try {
     const sm = st.session.sessionManager
     if (leafId === null) {

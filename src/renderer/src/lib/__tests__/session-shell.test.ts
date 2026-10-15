@@ -42,11 +42,14 @@ import {
   evictSessionViewsIfNeeded,
 } from '../session-shell'
 import { ipcClient } from '@renderer/lib/ipc-client'
-import { composerTurnActive } from '../session-worker-sync'
+import { applyLiveSnapshotToView, composerTurnActive } from '../session-worker-sync'
+import { captureVisibleLiveSessionTimeline } from '../capture-live-session-timeline'
+import { clearLiveSessionTimeline, getLiveSessionTimeline } from '../live-session-timeline-cache'
 
 describe('session-shell', () => {
   beforeEach(() => {
     clearSessionShellForTests()
+    clearLiveSessionTimeline()
     useUIStore.setState({
       currentSessionId: null,
       historySessionFile: null,
@@ -169,6 +172,42 @@ describe('session-shell', () => {
     evictSessionViewsIfNeeded()
     expect(listSessionViewKeys().length).toBeLessThanOrEqual(MAX_SESSION_VIEWS)
     expect(getSessionView('/tmp/run.jsonl')).not.toBeNull()
+  })
+
+  it('does not resurrect a finished stream on repeated session opens after an idle poll', () => {
+    const sessionFile = '/tmp/a.jsonl'
+    useUIStore.setState({
+      currentSessionId: 'a',
+      historySessionFile: sessionFile,
+      timelineItems: [
+        { id: 'u1', type: 'user-message', text: 'hello', timestamp: 1 },
+        { id: 'a1', type: 'assistant-message', text: 'answer', timestamp: 2 },
+      ],
+      streamingAssistantId: 'a1',
+      runState: { status: 'running', activeRunId: 'run-a', toolCount: 0, errorCount: 0 },
+      workerLiveSnapshot: { sessionId: 'a', sessionFile, status: 'running' },
+      sessionRuntimeRunning: { [sessionFile]: true },
+    })
+    captureVisibleLiveSessionTimeline()
+    focusSessionSync('b', '/tmp/b.jsonl')
+    focusSessionSync('a', sessionFile)
+
+    // The terminal event was missed, but polling confirms that A has finished.
+    applyLiveSnapshotToView(
+      sessionFile,
+      { sessionId: 'a', sessionFile, status: 'idle' },
+      useUIStore.getState(),
+    )
+    expect(useUIStore.getState().streamingAssistantId).toBeNull()
+    expect(getLiveSessionTimeline(sessionFile)?.runState.status).toBe('idle')
+
+    for (let open = 0; open < 2; open++) {
+      captureVisibleLiveSessionTimeline()
+      focusSessionSync('b', '/tmp/b.jsonl')
+      focusSessionSync('a', sessionFile)
+      expect(useUIStore.getState().streamingAssistantId).toBeNull()
+      expect(composerTurnActive(useUIStore.getState())).toBe(false)
+    }
   })
 
   it('composerTurnActive ignores a running state owned by another session', () => {

@@ -7,7 +7,7 @@ import { executeSlashCommand, isExecutableBuiltin } from './slash-exec'
 import { renderRichFromSegments, serializeRichInput } from './attachments'
 import { routeDesktopSlashBeforeSend } from '@renderer/lib/slash-desktop-router'
 import { abortAgentTurn, isComposerAbortCooldown } from '@renderer/lib/composer-abort'
-import { extensionUiBlocksComposer } from '@renderer/stores/extension-ui-store'
+import { extensionUiBlocksComposer, useExtensionUIStore } from '@renderer/stores/extension-ui-store'
 import type { useComposerInputHistory } from './use-composer-input-history'
 import { currentSessionCapabilities } from '@renderer/lib/session-capabilities'
 import {
@@ -204,8 +204,7 @@ export function useComposerSend(opts: {
 
   const runComposerAbort = useCallback(
     async (currentText: string) => {
-      const { dismissExtensionDialogState } = await import('@renderer/lib/extension-ui-channel')
-      dismissExtensionDialogState()
+      useExtensionUIStore.getState().cancelForSession(useUIStore.getState().historySessionFile)
       await abortAgentTurn({ restoreEditorText: currentText, setEditorText: setContent })
     },
     [setContent],

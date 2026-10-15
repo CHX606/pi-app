@@ -40,7 +40,7 @@ import { unlink } from 'node:fs/promises'
 import { createNewSessionInPool, nextWorkspacePoolKey } from './worker-manager-new-session'
 import { readSessionMetaFromFile, sessionFilePathForFs } from './session-file-meta'
 import {
-  applySettledRunToSessionLeafOverride,
+  applySessionEventToSessionLeafOverride,
   clearSessionLeafOverride,
   getSessionLeafOverride,
   setSessionLeafOverride,
@@ -204,14 +204,7 @@ export class WorkerManager {
     return init
   }
 
-  /**
-   * Find a pool slot to reuse for `sessionFile` on `cwd`. Prefers the
-   * workspace slot, then any idle (non-running) slot already bound to the same
-   * cwd — re-keying an idle worker to the new session avoids forking a fresh
-   * WSL worker on every session switch (WSL forks are seconds: wsl.exe spawn +
-   * SDK import). Never steals a slot mid-turn: a running session keeps its
-   * worker so its agent can finish in the background.
-   */
+  /** Reuse an unbound workspace worker; workers already bound to another session stay isolated. */
   private findReusableSlotForSession(sessionFile: string, cwd: string): WorkerSlot | null {
     const sk = normalizeSessionKey(sessionFile)
     const wsKey = workspacePoolKey(cwd)
@@ -219,16 +212,12 @@ export class WorkerManager {
     if (
       wsSlot &&
       !wsSlot.stopping &&
+      !wsSlot.agentTurnActive &&
+      !wsSlot.identityOpsInFlight &&
       this.slotMatchesCurrentRuntime(wsSlot) &&
       (!wsSlot.sessionFile || wsSlot.sessionFile === sk)
     ) {
       return wsSlot
-    }
-    for (const slot of this.pool.values()) {
-      if (slot === wsSlot || slot.stopping || slot.agentTurnActive || slot.identityOpsInFlight) continue
-      if (!this.slotMatchesCurrentRuntime(slot)) continue
-      if (slot.cwd !== cwd) continue
-      return slot
     }
     return null
   }
@@ -251,8 +240,7 @@ export class WorkerManager {
       return this.initResultFromSlot(existing)
     }
 
-    // Reuse an idle same-cwd worker (workspace slot or any non-running session
-    // slot) instead of forking — session switches then share a single worker.
+    // A prewarmed workspace worker has no session to switch away from.
     const reusable = this.findReusableSlotForSession(sessionFile, cwd)
     if (reusable) {
       if (reusable.initPromise) await reusable.initPromise
@@ -342,7 +330,7 @@ export class WorkerManager {
       if (sessionFile && !base.sessionFile) base.sessionFile = sessionFile
       enriched = base as unknown as AppEvent
     }
-    applySettledRunToSessionLeafOverride(enriched)
+    applySessionEventToSessionLeafOverride(enriched)
     observeAppEventForCompletion(enriched)
     remoteTap.appEvent(enriched)
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
