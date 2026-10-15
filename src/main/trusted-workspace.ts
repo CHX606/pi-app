@@ -6,12 +6,13 @@ import { isSandboxWorkspacePath } from './sandbox-workspaces'
 import { readSessionMetaFromFile } from './session-file-meta'
 import { workerManager } from './worker-manager'
 import { getAgentRuntimeConfig } from './wsl/runtime-config'
+import { normalizeWorkspaceCwd } from './wsl/workspace-path'
 
 /** Active workspace root for capability-bound IPC (git mutations, image preview). */
 export function getTrustedWorkspaceRoot(): string | null {
   const raw = workerManager.cwd || configStore.get('currentProject')
   const t = typeof raw === 'string' ? raw.trim() : ''
-  return t || null
+  return t ? normalizeWorkspaceCwd(t) : null
 }
 
 export function authorizeTrustedCwd(reqCwd: string | undefined): { ok: true; cwd: string } | { ok: false; error: string } {
@@ -19,7 +20,7 @@ export function authorizeTrustedCwd(reqCwd: string | undefined): { ok: true; cwd
   if (!trusted) return { ok: false, error: 'no_trusted_workspace' }
   if (!reqCwd || !String(reqCwd).trim()) return { ok: true, cwd: trusted }
   const a = resolve(trusted)
-  const b = resolve(String(reqCwd).trim())
+  const b = resolve(normalizeWorkspaceCwd(String(reqCwd)))
   if (a !== b) return { ok: false, error: 'cwd_not_trusted' }
   return { ok: true, cwd: trusted }
 }
@@ -46,12 +47,13 @@ function workspacePathsEqual(a: string, b: string): boolean {
 
 /** The active workspace, a recent project or a sandbox folder (renderer-chosen project paths). */
 export function authorizeProjectCwd(reqCwd: string | undefined): { ok: true; cwd: string } | { ok: false; error: string } {
-  const target = String(reqCwd || '').trim()
+  const target = normalizeWorkspaceCwd(String(reqCwd || ''))
   if (!target) return authorizeTrustedCwd(reqCwd)
   const trusted = [
     getTrustedWorkspaceRoot(),
     ...(configStore.get('recentProjects') || []),
-  ].find((workspace) => workspace && workspacePathsEqual(workspace, target))
+  ].map((workspace) => workspace ? normalizeWorkspaceCwd(workspace) : null)
+    .find((workspace) => workspace && workspacePathsEqual(workspace, target))
   if (trusted) return { ok: true, cwd: trusted }
   if (isPortableAbsolutePath(target) && isSandboxWorkspacePath(target) && existsSync(target)) {
     return { ok: true, cwd: target }

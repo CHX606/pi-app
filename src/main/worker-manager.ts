@@ -33,6 +33,7 @@ import type { WorkerInitResult, WorkerSlot } from './worker-manager-types'
 import { normalizeSessionKey, workspacePoolKey } from './worker-session-key'
 import { isWslWindowsPath } from '@shared/wsl-path'
 import { getAgentRuntimeConfig, isWslRuntimeActive } from './wsl/runtime-config'
+import { normalizeWorkspaceCwd } from './wsl/workspace-path'
 import { readMaxSessionWorkers } from './worker-pool-config'
 import { configStore } from './config-store'
 import { unlink } from 'node:fs/promises'
@@ -422,10 +423,10 @@ export class WorkerManager {
    */
   resolveWorkspaceCwd(preferred?: string | null): string | null {
     const fromPreferred = preferred?.trim()
-    if (fromPreferred) return fromPreferred
-    if (this.cwd) return this.cwd
+    if (fromPreferred) return normalizeWorkspaceCwd(fromPreferred)
+    if (this.cwd) return normalizeWorkspaceCwd(this.cwd)
     const fromConfig = configStore.get('currentProject')
-    if (typeof fromConfig === 'string' && fromConfig.trim()) return fromConfig.trim()
+    if (typeof fromConfig === 'string' && fromConfig.trim()) return normalizeWorkspaceCwd(fromConfig)
     return null
   }
 
