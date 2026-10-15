@@ -4,15 +4,18 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkerSlot } from '../worker-manager-types'
 
-const mocks = vi.hoisted(() => ({ fork: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  fork: vi.fn(),
+  runtime: { mode: 'host' as 'host' | 'wsl', distro: null as string | null },
+}))
 vi.mock('../config-store', () => ({ configStore: { get: vi.fn(() => undefined) } }))
 vi.mock('../session-file-meta', () => ({
   readSessionMetaFromFile: vi.fn(async () => ({ cwd: '/workspace', sessionId: 'a' })),
   sessionFilePathForFs: (file: string) => file,
 }))
 vi.mock('../wsl/runtime-config', () => ({
-  getAgentRuntimeConfig: () => ({ mode: 'host', distro: null }),
-  isWslRuntimeActive: () => false,
+  getAgentRuntimeConfig: () => mocks.runtime,
+  isWslRuntimeActive: () => mocks.runtime.mode === 'wsl',
 }))
 vi.mock('../worker-pool-config', () => ({
   readMaxSessionWorkers: () => 4,
@@ -26,6 +29,8 @@ vi.mock('../worker-manager-pool', async (original) => ({
 import { WorkerManager } from '../worker-manager'
 import { attachWorkerHandlers, disposeWorkerSlot } from '../worker-manager-pool'
 import { normalizeSessionKey } from '../worker-session-key'
+import { readSessionMetaFromFile } from '../session-file-meta'
+import { configStore } from '../config-store'
 
 type Message = Record<string, unknown>
 type Handler = (message: Message, reply: (response: Message) => void) => void
@@ -84,8 +89,58 @@ const posted = (slot: WorkerSlot, type: string) =>
 
 beforeEach(() => {
   mocks.fork.mockReset()
+  mocks.runtime = { mode: 'host', distro: null }
+  vi.mocked(readSessionMetaFromFile).mockResolvedValue({ cwd: '/workspace', sessionId: 'a' })
+  vi.mocked(configStore.get).mockReset()
 })
 afterEach(() => vi.useRealTimers())
+
+describe('WSL session workspace paths', () => {
+  it.each(['load', 'rpc', 'fork', 'clone'] as const)('keeps the host cwd when a WSL session is opened through %s', async (action) => {
+    mocks.runtime = { mode: 'wsl', distro: 'Debian' }
+    const cwd = '\\\\wsl.localhost\\Debian\\home\\u\\project'
+    const file = `${cwd}\\sessions\\a.jsonl`
+    vi.mocked(readSessionMetaFromFile).mockResolvedValue({ cwd: '/home/u/project', sessionId: 'a' })
+    mocks.fork.mockImplementation(async (workspace: string, options: { poolKey: string }) => {
+      const slot = makeSlot(options.poolKey, normalReply)
+      slot.cwd = workspace
+      slot.runtime = { ...mocks.runtime }
+      return { slot, init: Promise.resolve({ sessionId: 'a' }) }
+    })
+    const { manager } = setup()
+
+    if (action === 'load') await manager.loadSession(file)
+    else if (action === 'rpc') await manager.getMessages(file)
+    else if (action === 'fork') await manager.forkSession({ sessionFile: file, entryId: 'entry' })
+    else await manager.cloneSession({ sessionFile: file })
+    manager.focusExistingSession(file)
+
+    expect(mocks.fork).toHaveBeenCalledOnce()
+    expect(mocks.fork).toHaveBeenCalledWith(cwd, { poolKey: key(file), sessionFile: key(file) })
+    expect(manager.cwd).toBe(cwd)
+  })
+
+  it.each([
+    ['host', null, '/home/u/project', '/home/u/project'],
+    ['wsl', null, '/home/u/project', '/home/u/project'],
+    ['wsl', 'Debian', '/mnt/c/project', 'C:\\project'],
+    ['wsl', 'Debian', 'C:\\project', 'C:\\project'],
+    ['wsl', 'Debian', '//wsl.localhost/Debian/home/u/project', '//wsl.localhost/Debian/home/u/project'],
+  ] as const)('resolves %s workspace %s %s to %s', (mode, distro, value, expected) => {
+    mocks.runtime = { mode, distro }
+    expect(new WorkerManager().resolveWorkspaceCwd(value)).toBe(expected)
+  })
+
+  it('normalizes foreground and persisted workspace fallbacks', () => {
+    mocks.runtime = { mode: 'wsl', distro: 'Debian' }
+    const cwd = '\\\\wsl.localhost\\Debian\\home\\u\\project'
+    const slot = makeSlot('/sessions/a.jsonl', normalReply)
+    slot.cwd = '/home/u/project'
+    expect(setup(slot).manager.resolveWorkspaceCwd()).toBe(cwd)
+    vi.mocked(configStore.get).mockReturnValue('/home/u/project')
+    expect(new WorkerManager().resolveWorkspaceCwd()).toBe(cwd)
+  })
+})
 
 describe('R2 fork/clone remap the source worker', () => {
   it.each(['fork', 'clone'] as const)('should_remap_source_slot_when_foreground_changes_during_%s', async (action) => {

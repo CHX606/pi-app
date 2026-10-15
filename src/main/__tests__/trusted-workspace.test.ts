@@ -40,9 +40,9 @@ vi.mock('../session-file-meta', () => ({
   readSessionMetaFromFile: mocks.readSessionMetaFromFile,
 }))
 
-import { authorizeTrustedSessionFile } from '../trusted-workspace'
+import { authorizeProjectCwd, authorizeTrustedCwd, authorizeTrustedSessionFile, getTrustedWorkspaceRoot } from '../trusted-workspace'
 
-describe('authorizeTrustedSessionFile', () => {
+describe('trusted workspace authorization', () => {
   beforeEach(() => {
     mocks.cwd = '/workspace'
     mocks.currentProject = null
@@ -55,6 +55,40 @@ describe('authorizeTrustedSessionFile', () => {
   })
 
   afterEach(() => rmSync(sandboxRoot, { recursive: true, force: true }))
+
+  it('normalizes WSL worker cwd and both native and host requests before authorizing Git access', () => {
+    mocks.runtime = { mode: 'wsl', distro: 'Debian' }
+    mocks.cwd = '/home/u/project'
+    const cwd = '\\\\wsl.localhost\\Debian\\home\\u\\project'
+    mocks.currentProject = cwd
+
+    expect(getTrustedWorkspaceRoot()).toBe(cwd)
+    expect(authorizeTrustedCwd(undefined)).toEqual({ ok: true, cwd })
+    expect(authorizeTrustedCwd('/home/u/project')).toEqual({ ok: true, cwd })
+    expect(authorizeTrustedCwd(cwd)).toEqual({ ok: true, cwd })
+    expect(authorizeProjectCwd(cwd)).toEqual({ ok: true, cwd })
+    expect(authorizeProjectCwd('/home/u/project')).toEqual({ ok: true, cwd })
+    expect(authorizeTrustedCwd('/home/u/other')).toEqual({ ok: false, error: 'cwd_not_trusted' })
+    expect(authorizeProjectCwd('\\\\wsl.localhost\\Ubuntu\\home\\u\\project')).toEqual({ ok: false, error: 'cwd_not_trusted' })
+  })
+
+  it('normalizes persisted current and recent WSL workspaces without authorizing unrelated paths', () => {
+    mocks.runtime = { mode: 'wsl', distro: 'Debian' }
+    mocks.cwd = null
+    mocks.currentProject = '/home/u/project'
+    mocks.recentProjects = ['/mnt/c/background']
+
+    expect(getTrustedWorkspaceRoot()).toBe('\\\\wsl.localhost\\Debian\\home\\u\\project')
+    expect(authorizeProjectCwd('/mnt/c/background')).toEqual({ ok: true, cwd: 'C:\\background' })
+    expect(authorizeProjectCwd('C:\\background')).toEqual({ ok: true, cwd: 'C:\\background' })
+    expect(authorizeProjectCwd('/home/u/other')).toEqual({ ok: false, error: 'cwd_not_trusted' })
+  })
+
+  it('keeps native workspace paths when using the host runtime', () => {
+    mocks.cwd = '/home/u/project'
+    expect(getTrustedWorkspaceRoot()).toBe(mocks.cwd)
+    expect(authorizeTrustedCwd(mocks.cwd)).toEqual({ ok: true, cwd: mocks.cwd })
+  })
 
   it('accepts an absolute session whose header belongs to the active workspace', async () => {
     expect(await authorizeTrustedSessionFile('/workspace', '/sessions/a.jsonl')).toEqual({
