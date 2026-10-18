@@ -154,12 +154,8 @@ export function registerModelRuntimeHandlers(): void {
   }))
 
   registerHandler('ipc:thinkingLevel.set', async (req) => {
-    const sessionFile = String(req.sessionFile || '').trim() || undefined
-    if (!workerManager.isRunning && !sessionFile) {
-      const cwd = workerManager.cwd || configStore.get('currentProject')
-      if (!cwd || isSandboxWorkspacePath(cwd)) throw new Error('Worker not started')
-      await workerManager.start(cwd)
-    }
+    const sessionFile = String(req.sessionFile || '').trim()
+    if (!sessionFile) throw new Error('SESSION_FILE_REQUIRED')
     await workerManager.setThinkingLevel(req.level, sessionFile)
     return { level: req.level }
   })

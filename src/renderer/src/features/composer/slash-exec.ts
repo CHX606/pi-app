@@ -11,6 +11,7 @@ import { useUIStore } from '@renderer/stores/ui-store'
 import { useExtensionUIStore } from '@renderer/stores/extension-ui-store'
 import { ensureAvailableModels } from '@renderer/lib/available-models-cache'
 import { commitSessionDisplayMeta } from '@renderer/lib/session-display-meta'
+import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { enterBlankSession } from '@renderer/lib/blank-session-transition'
 
 /** App-native builtins handled directly in the renderer (not forwarded as plain prompt text). */
@@ -110,13 +111,16 @@ export async function executeSlashCommand(
       try {
         // Scope to the viewed session like the thinking picker — the foreground worker may be another session.
         const sessionFile = store.historySessionFile
-        await ipcClient.invoke('thinkingLevel.set', {
-          sessionId: '',
-          sessionFile: sessionFile ?? undefined,
-          level: arg,
-        })
-        store.setRunState({ thinkingLevel: arg })
+        if (sessionFile) {
+          await ipcClient.invoke('thinkingLevel.set', {
+            sessionId: '',
+            sessionFile,
+            level: arg,
+          })
+        }
         commitSessionDisplayMeta(sessionFile, { thinkingLevel: arg })
+        if (sessionFile && !sessionFilesEqual(useUIStore.getState().historySessionFile, sessionFile)) return true
+        store.setRunState({ thinkingLevel: arg })
         toast.success(`Thinking: ${arg}`)
       } catch (e) {
         console.error('/thinking failed:', e)
