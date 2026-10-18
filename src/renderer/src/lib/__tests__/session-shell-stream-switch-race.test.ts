@@ -139,6 +139,134 @@ describe('session shell stream switch race', () => {
     expect(useUIStore.getState().runState.status).toBe('running')
   })
 
+  it.each([
+    { steering: [], followUp: [] },
+    { steering: ['new steering'], followUp: ['new follow-up'] },
+  ])('restores the latest background queue on immediate switch-back: %j', (queue) => {
+    useUIStore.getState().setPendingQueue(['old steering'], ['old follow-up'])
+    captureVisibleLiveSessionTimeline()
+    focusSessionSync('session-b', sessionB)
+
+    useUIStore.getState().processEvent({
+      type: 'queue',
+      ...queue,
+      seq: 1,
+      workspaceId: '/workspace',
+      sessionId: 'session-a',
+      sessionFile: sessionA,
+      timestamp: 3,
+    })
+
+    // The background queue must not change the other session's composer.
+    expect(useUIStore.getState().pendingSteering).toEqual([])
+    expect(useUIStore.getState().pendingFollowUp).toEqual([])
+    focusSessionSync('session-a', sessionA)
+    expect(useUIStore.getState().pendingSteering).toEqual(queue.steering)
+    expect(useUIStore.getState().pendingFollowUp).toEqual(queue.followUp)
+  })
+
+  it('keeps a queue consumed in the foreground cleared after the turn becomes idle', () => {
+    useUIStore.getState().setPendingQueue(['old steering'], ['old follow-up'])
+    captureVisibleLiveSessionTimeline()
+    focusSessionSync('session-b', sessionB)
+    focusSessionSync('session-a', sessionA)
+
+    useUIStore.getState().processEvent({
+      type: 'queue',
+      steering: [],
+      followUp: [],
+      seq: 1,
+      workspaceId: '/workspace',
+      sessionId: 'session-a',
+      sessionFile: sessionA,
+      timestamp: 3,
+    })
+    useUIStore.getState().processEvent({
+      type: 'run',
+      phase: 'idle',
+      runId: 'run-a',
+      settled: true,
+      seq: 2,
+      workspaceId: '/workspace',
+      sessionId: 'session-a',
+      sessionFile: sessionA,
+      timestamp: 4,
+    })
+    expect(useUIStore.getState().runState.status).toBe('idle')
+
+    captureVisibleLiveSessionTimeline()
+    focusSessionSync('session-b', sessionB)
+    focusSessionSync('session-a', sessionA)
+    expect(useUIStore.getState().pendingSteering).toEqual([])
+    expect(useUIStore.getState().pendingFollowUp).toEqual([])
+  })
+
+  it('restores a background queue when opening a session for the first time', async () => {
+    const sessionFile = '/tmp/unopened.jsonl'
+    useUIStore.getState().processEvent({
+      type: 'queue',
+      steering: ['background steering'],
+      followUp: ['background follow-up'],
+      seq: 1,
+      workspaceId: '/workspace',
+      sessionId: 'unopened',
+      sessionFile,
+      timestamp: 3,
+    })
+
+    focusSessionSync('unopened', sessionFile)
+    expect(useUIStore.getState().pendingSteering).toEqual(['background steering'])
+    expect(useUIStore.getState().pendingFollowUp).toEqual(['background follow-up'])
+
+    historyMock.fetch.mockResolvedValueOnce({ items: [], sourceCount: 0, totalCount: 0 })
+    await hydrateSessionView(sessionFile, 'unopened')
+    expect(useUIStore.getState().pendingSteering).toEqual(['background steering'])
+    expect(useUIStore.getState().pendingFollowUp).toEqual(['background follow-up'])
+  })
+
+  it.each([
+    { steering: [], followUp: [] },
+    { steering: [], followUp: ['old follow-up'] },
+    { steering: ['new steering'], followUp: ['old follow-up', 'new follow-up'] },
+  ])('preserves visible queue updates while history is loading: %j', async (queue) => {
+    useUIStore.getState().setPendingQueue(['old steering'], ['old follow-up'])
+    captureVisibleLiveSessionTimeline()
+    focusSessionSync('session-b', sessionB)
+    focusSessionSync('session-a', sessionA)
+
+    const items = useUIStore.getState().timelineItems
+    const history = deferred<{
+      items: typeof items
+      sourceCount: number
+      totalCount: number
+    }>()
+    historyMock.fetch.mockReturnValueOnce(history.promise)
+    const hydration = hydrateSessionView(sessionA, 'session-a')
+
+    useUIStore.getState().processEvent({
+      type: 'queue',
+      ...queue,
+      seq: 1,
+      workspaceId: '/workspace',
+      sessionId: 'session-a',
+      sessionFile: sessionA,
+      timestamp: 3,
+    })
+    expect(useUIStore.getState().pendingSteering).toEqual(queue.steering)
+    expect(useUIStore.getState().pendingFollowUp).toEqual(queue.followUp)
+
+    history.resolve({ items, sourceCount: items.length, totalCount: items.length })
+    await hydration
+
+    expect(useUIStore.getState().pendingSteering).toEqual(queue.steering)
+    expect(useUIStore.getState().pendingFollowUp).toEqual(queue.followUp)
+    captureVisibleLiveSessionTimeline()
+    focusSessionSync('session-b', sessionB)
+    focusSessionSync('session-a', sessionA)
+    expect(useUIStore.getState().pendingSteering).toEqual(queue.steering)
+    expect(useUIStore.getState().pendingFollowUp).toEqual(queue.followUp)
+  })
+
   it('should_bind_remapped_stream_id_that_exists_in_session_view', () => {
     saveLiveSessionTimeline({
       sessionId: 'session-a',

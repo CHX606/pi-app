@@ -21,6 +21,7 @@ import { projectTimelineItems } from '@shared/timeline-projection'
 import {
   clearLiveSessionTimeline,
   getLiveSessionTimeline,
+  updateLiveSessionTimeline,
 } from '@renderer/lib/live-session-timeline-cache'
 import {
   mergeLiveTimelineWithHistoryTail,
@@ -207,6 +208,13 @@ export function captureFocusFromUiStore(): void {
   const latest = useUIStore.getState()
   const sessionKey = sessionKeyFromFile(viewFile)
   if (!sessionKey) return
+
+  // Idle turns no longer capture live text, but their queue may have changed in the foreground.
+  updateLiveSessionTimeline(sessionKey, (snapshot) => ({
+    ...snapshot,
+    pendingSteering: latest.pendingSteering,
+    pendingFollowUp: latest.pendingFollowUp,
+  }))
 
   const runUI = resolveRunUI(sessionKey, {
     runtime: latest.sessionRuntimeRunning ?? {},
@@ -399,9 +407,9 @@ export function focusSessionSync(sessionId: string, sessionFile: string): {
   focusKey = sessionKey
 
   let view = views.get(sessionKey)
+  const live = getLiveSessionTimeline(sessionKey)
   if (!view) {
     view = emptyView(sessionKey, sessionId)
-    views.set(sessionKey, view)
   } else {
     view = {
       ...view,
@@ -410,7 +418,6 @@ export function focusSessionSync(sessionId: string, sessionFile: string): {
     }
     // Refresh runUI + re-merge live stream so switch-back does not paint stale order.
     const runtime = useUIStore.getState().sessionRuntimeRunning ?? {}
-    const live = getLiveSessionTimeline(sessionKey)
     const runtimeRunning =
       runtime[sessionKey] === true ||
       Object.entries(runtime).some(([k, v]) => v && sessionFilesEqual(k, sessionKey))
@@ -461,8 +468,13 @@ export function focusSessionSync(sessionId: string, sessionFile: string): {
         agentTurnBootstrapping: terminalLive ? false : view.agentTurnBootstrapping,
       }
     }
-    views.set(sessionKey, view)
   }
+  view = {
+    ...view,
+    pendingSteering: [...(live?.pendingSteering ?? view.pendingSteering)],
+    pendingFollowUp: [...(live?.pendingFollowUp ?? view.pendingFollowUp)],
+  }
+  views.set(sessionKey, view)
 
   // Any non-empty cache paints immediately — even if a previous hydrate left phase='hydrating'
   // (user switched away mid-fetch). Streaming switch-back must never stick on skeleton.
@@ -745,16 +757,12 @@ export async function hydrateSessionView(
       streamingAssistantId,
       optimisticPendingUserText,
       agentTurnBootstrapping,
-      pendingSteering: live?.pendingSteering
-        ? [...live.pendingSteering]
-        : existing?.pendingSteering
-          ? [...existing.pendingSteering]
-          : [],
-      pendingFollowUp: live?.pendingFollowUp
-        ? [...live.pendingFollowUp]
-        : existing?.pendingFollowUp
-          ? [...existing.pendingFollowUp]
-          : [],
+      pendingSteering: [
+        ...(focusedState?.pendingSteering ?? live?.pendingSteering ?? existing?.pendingSteering ?? []),
+      ],
+      pendingFollowUp: [
+        ...(focusedState?.pendingFollowUp ?? live?.pendingFollowUp ?? existing?.pendingFollowUp ?? []),
+      ],
       phase: 'ready',
       lastFocusedAt: Date.now(),
       sessionMeta: hist.sessionMeta,
