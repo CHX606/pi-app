@@ -40,6 +40,7 @@ vi.mock('./wsl/runtime-config', () => ({
 import {
   finalizeVersionInstall,
   installVersion,
+  isInstalling,
   switchTo,
 } from './sdk-manager'
 import { readSdkSelection, resolveActiveSdk } from './sdk-loader'
@@ -118,6 +119,41 @@ describe('user SDK runtime upgrades', () => {
     mocks.userDataDir = mkdtempSync(join(tmpdir(), 'pi-sdk-generation-'))
     mocks.spawn.mockReset()
   })
+
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'should_install_and_activate_sdk_when_npm_runs_on_%s',
+    async (platform) => {
+      const originalPlatform = process.platform
+      Object.defineProperty(process, 'platform', { value: platform })
+      try {
+        mocks.spawn.mockImplementation((command: string, args: string[], options: { cwd: string; shell: boolean }) => {
+          const result = spawnResult(0, (cwd) => writeFakeSdk(cwd, '1.3.0'))
+          if (platform === 'win32' && (command !== 'npm.cmd' || !options.shell)) {
+            return {
+              stdout: { on: vi.fn() },
+              stderr: { on: vi.fn() },
+              on: vi.fn((event: string, listener: (error: Error) => void) => {
+                if (event === 'error') queueMicrotask(() => listener(new Error('spawn npm ENOENT')))
+              }),
+            }
+          }
+          return result(command, args, options)
+        })
+
+        const installed = await installVersion('1.3.0', vi.fn())
+
+        expect(mocks.spawn).toHaveBeenCalledWith(
+          platform === 'win32' ? 'npm.cmd' : 'npm',
+          ['install', '@earendil-works/pi-coding-agent@1.3.0', '--no-audit', '--no-fund', '--omit=dev'],
+          expect.objectContaining({ shell: platform === 'win32', cwd: installedSdkDir(installed.userDir) }),
+        )
+        expect(readSdkSelection(mocks.userDataDir)).toEqual({ kind: 'user', userDir: installed.userDir })
+        expect(isInstalling()).toBe(false)
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform })
+      }
+    },
+  )
 
   it('rejects an unsafe userDir pointer instead of escaping the SDK directory', () => {
     const sdkDir = join(mocks.userDataDir, 'sdk')
@@ -296,12 +332,17 @@ describe('user SDK runtime upgrades', () => {
     await expect(installVersion('2.0.0', vi.fn())).rejects.toThrow(
       'npm 启动失败: spawn failed',
     )
+    expect(isInstalling()).toBe(false)
     expect(resolveActiveSdk(mocks.userDataDir).entryPath).toBe(
       activeBefore.entryPath,
     )
     expect(
       readFileSync(join(mocks.userDataDir, 'sdk', 'current.json'), 'utf8'),
     ).toBe(currentBefore)
+
+    mocks.spawn.mockImplementationOnce(spawnResult(0, (cwd) => writeFakeSdk(cwd, 'retry')))
+    await expect(installVersion('2.0.0', vi.fn())).resolves.toMatchObject({ userDir: expect.any(String) })
+    expect(resolveActiveSdk(mocks.userDataDir).version).toBe('retry')
   })
 
   it('keeps the previous active SDK when spawning npm throws synchronously', async () => {

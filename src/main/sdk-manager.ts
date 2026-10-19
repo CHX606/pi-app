@@ -270,9 +270,9 @@ export function installVersion(
     let child: ReturnType<typeof spawn>
     try {
       child = spawn(
-        'npm',
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
         ['install', `${PKG}@${version}`, '--no-audit', '--no-fund', '--omit=dev'],
-        { cwd: stage, shell: false, env: { ...process.env } },
+        { cwd: stage, shell: process.platform === 'win32', windowsHide: true, env: { ...process.env } },
       )
     } catch (error) {
       installing = false
