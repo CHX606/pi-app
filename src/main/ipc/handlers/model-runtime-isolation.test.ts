@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listAvailableModelsWithSdk: vi.fn(),
   listCatalogModelsWithSdk: vi.fn(),
   readModelsConfigRaw: vi.fn(),
+  workerManager: { isRunning: false, cwd: '/running-workspace', start: vi.fn(), setThinkingLevel: vi.fn() },
 }))
 
 vi.mock('electron', () => ({ app: { getPath: () => '/user-data' } }))
@@ -15,7 +16,7 @@ vi.mock('../registry', () => ({
   registerHandler: (name: string, handler: (req: Record<string, unknown>) => Promise<unknown>) => mocks.handlers.set(name, handler),
   registerHandlerWithSchema: (name: string, _schema: unknown, handler: (req: Record<string, unknown>) => Promise<unknown>) => mocks.handlers.set(name, handler),
 }))
-vi.mock('../../worker-manager', () => ({ workerManager: { isRunning: false, cwd: null } }))
+vi.mock('../../worker-manager', () => ({ workerManager: mocks.workerManager }))
 vi.mock('../../config-store', () => ({ configStore: { get: vi.fn() } }))
 vi.mock('../../sandbox-workspaces', () => ({ isSandboxWorkspacePath: () => false }))
 vi.mock('../../pi-models-json', () => ({
@@ -46,6 +47,9 @@ const list = (scope: string) => mocks.handlers.get('ipc:model.list')!({ scope })
 
 beforeEach(() => {
   mocks.handlers.clear()
+  mocks.workerManager.isRunning = false
+  mocks.workerManager.start.mockReset()
+  mocks.workerManager.setThinkingLevel.mockReset()
   mocks.runtime = { mode: 'wsl', distro: 'Ubuntu' }
   for (const mock of [mocks.previewListModels, mocks.getActiveSdkModule, mocks.listAvailableModelsWithSdk, mocks.listCatalogModelsWithSdk, mocks.readModelsConfigRaw]) mock.mockReset()
   mocks.getActiveSdkModule.mockResolvedValue({ host: true })
@@ -53,6 +57,37 @@ beforeEach(() => {
   mocks.listCatalogModelsWithSdk.mockResolvedValue([hostModel])
   mocks.readModelsConfigRaw.mockReturnValue({ path: '//wsl/models.json', config: { models: [wslModel] } })
   registerModelRuntimeHandlers()
+})
+
+describe('thinking level session isolation', () => {
+  it.each([false, true])('rejects an unscoped change when isRunning=%s', async (isRunning) => {
+    mocks.workerManager.isRunning = isRunning
+
+    await expect(mocks.handlers.get('ipc:thinkingLevel.set')!({ level: 'medium' }))
+      .rejects.toThrow('SESSION_FILE_REQUIRED')
+
+    expect(mocks.workerManager.start).not.toHaveBeenCalled()
+    expect(mocks.workerManager.setThinkingLevel).not.toHaveBeenCalled()
+  })
+
+  it('rejects a blank session target', async () => {
+    mocks.workerManager.isRunning = true
+
+    await expect(mocks.handlers.get('ipc:thinkingLevel.set')!({ level: 'medium', sessionFile: '  ' }))
+      .rejects.toThrow('SESSION_FILE_REQUIRED')
+
+    expect(mocks.workerManager.setThinkingLevel).not.toHaveBeenCalled()
+  })
+
+  it('changes only the explicitly requested session', async () => {
+    mocks.workerManager.isRunning = true
+
+    await expect(mocks.handlers.get('ipc:thinkingLevel.set')!({ level: 'medium', sessionFile: '/sessions/b.jsonl' }))
+      .resolves.toEqual({ level: 'medium' })
+
+    expect(mocks.workerManager.setThinkingLevel).toHaveBeenCalledExactlyOnceWith('medium', '/sessions/b.jsonl')
+    expect(mocks.workerManager.start).not.toHaveBeenCalled()
+  })
 })
 
 describe('R12 model list stays inside the active runtime', () => {

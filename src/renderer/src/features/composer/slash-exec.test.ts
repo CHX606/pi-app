@@ -95,6 +95,43 @@ describe('/compact runtime confirmation', () => {
   })
 })
 
+describe('/thinking session isolation', () => {
+  it('keeps a draft selection local while another session is running', async () => {
+    useUIStore.setState({ historySessionFile: null })
+
+    expect(await executeSlashCommand('/thinking medium')).toBe(true)
+
+    expect(invoke).not.toHaveBeenCalled()
+    expect(useUIStore.getState().runState.thinkingLevel).toBe('medium')
+  })
+
+  it('targets the viewed session explicitly', async () => {
+    invoke.mockResolvedValue({ level: 'medium' })
+
+    await executeSlashCommand('/thinking medium')
+
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('thinkingLevel.set', {
+      sessionId: '', sessionFile: 'C:/sessions/current.jsonl', level: 'medium',
+    })
+    expect(useUIStore.getState().runState.thinkingLevel).toBe('medium')
+  })
+
+  it('does not update another session after the request completes', async () => {
+    let resolve!: (value: unknown) => void
+    invoke.mockReturnValue(new Promise((done) => { resolve = done }))
+    const change = executeSlashCommand('/thinking medium')
+    useUIStore.setState({
+      historySessionFile: 'C:/sessions/other.jsonl',
+      runState: { ...useUIStore.getState().runState, thinkingLevel: 'xhigh' },
+    })
+
+    resolve({ level: 'medium' })
+    await change
+
+    expect(useUIStore.getState().runState.thinkingLevel).toBe('xhigh')
+  })
+})
+
 describe('/model runtime confirmation', () => {
   it('resolves model names from only available models', async () => {
     invoke.mockImplementation(async (method) => {

@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 import i18n from '@renderer/lib/i18n'
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { commitSessionDisplayMeta } from '@renderer/lib/session-display-meta'
+import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { formatThinkingChip, normalizeThinkingLevel } from '@renderer/lib/format-run-display'
 import { boundThinkingLevelFor, setModelThinkingBinding } from '@renderer/lib/model-thinking-bindings'
 import { useUIStore } from '@renderer/stores/ui-store'
@@ -25,15 +26,17 @@ export async function applyThinkingLevel(level: string): Promise<void> {
   store.setRunState({ thinkingLevel: level })
   const bound = boundThinkingLevelFor(model)
   if (bound && model && bound !== level) void setModelThinkingBinding(model, level).catch(() => {})
+  // Draft selections are applied to their own worker when the session is created.
+  if (!sessionFile) return
   try {
-    await ipcClient.invoke('thinkingLevel.set', { sessionId: '', sessionFile: sessionFile ?? undefined, level })
+    await ipcClient.invoke('thinkingLevel.set', { sessionId: '', sessionFile, level })
     commitSessionDisplayMeta(sessionFile, { thinkingLevel: level })
     toast.success(i18n.t('composer:thinkingPicker.switched', { level: formatThinkingChip(level) }))
   } catch (e) {
-    // A draft session has no worker yet; the level is applied when the session starts.
-    if (e instanceof Error && e.message.toLowerCase().includes('worker not started')) return
+    const current = useUIStore.getState()
+    if (!sessionFilesEqual(current.historySessionFile, sessionFile) || current.runState.thinkingLevel !== level) return
     console.error('thinkingLevel.set failed:', e)
-    useUIStore.getState().setRunState({ thinkingLevel: previous })
+    current.setRunState({ thinkingLevel: previous })
     toast.error(i18n.t('composer:switchThinkingFailed'))
   }
 }
