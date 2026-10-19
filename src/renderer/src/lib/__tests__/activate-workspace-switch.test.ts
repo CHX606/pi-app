@@ -168,6 +168,28 @@ describe('workspace/session navigation', () => {
     expect(state.runState.status).toBe('running')
   })
 
+  it('should_leave_read_only_preview_when_continuing_the_visible_child', async () => {
+    const sessionFile = '/project/child.jsonl'
+    useUIStore.setState({
+      currentWorkspace: '/project',
+      currentSessionId: 'child',
+      historySessionFile: sessionFile,
+      ephemeralSandboxDraft: false,
+      subagentSessionGroup: {
+        workspacePath: '/project',
+        parentSessionId: 'parent',
+        parentSessionFile: '/project/parent.jsonl',
+        previewSessionFile: sessionFile,
+        children: [],
+      },
+    })
+
+    await switchSessionInPlace('child', sessionFile)
+
+    expect(useUIStore.getState().subagentSessionGroup).toBeNull()
+    expect(ipcClient.invoke).toHaveBeenCalledWith('session.setPendingBind', { sessionFile })
+  })
+
   it('explicit pick: temp items are cleared synchronously before any await (no stale flash)', async () => {
     const p = activateWorkspace('/project', { sessionId: 'p1', sessionFile: '/project/s1.jsonl' })
 
