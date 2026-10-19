@@ -24,8 +24,8 @@ const entries = new Map<string, Entry>()
 const inFlight = new Map<string, Promise<void>>()
 const listeners = new Set<() => void>()
 
-function entryKey(workspace: string, sessionFile: string): string {
-  return `${workspace}|${normalizeSessionFileKey(sessionFile) || sessionFile}`
+function entryKey(workspace: string, sessionFile: string, model: string | undefined): string {
+  return `${workspace}|${normalizeSessionFileKey(sessionFile) || sessionFile}|${model ?? ''}`
 }
 
 const MAX_CACHED_PREVIEWS = 16
@@ -49,9 +49,10 @@ function subscribe(listener: () => void): () => void {
 function ensureContextPreview(
   workspace: string,
   sessionFile: string,
+  model: string | undefined,
   opts: { force?: boolean; maxAgeMs?: number } = {},
 ): Promise<void> {
-  const key = entryKey(workspace, sessionFile)
+  const key = entryKey(workspace, sessionFile, model)
   const pending = inFlight.get(key)
   if (pending) return pending
   const current = entries.get(key)
@@ -84,8 +85,9 @@ export function useSessionContextPreview(options?: { enabled?: boolean }) {
   const sessionFile = useUIStore((state) => state.historySessionFile)
   const historyLoading = useUIStore((state) => state.historyLoading)
   const isRunning = useUIStore((state) => state.runState.status === 'running')
+  const model = useUIStore((state) => state.runState.model)
   const active = enabled && !!workspace && !!sessionFile && !historyLoading
-  const key = active ? entryKey(workspace!, sessionFile!) : null
+  const key = active ? entryKey(workspace!, sessionFile!, model) : null
 
   const entry = useSyncExternalStore(
     subscribe,
@@ -95,43 +97,43 @@ export function useSessionContextPreview(options?: { enabled?: boolean }) {
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!active) return
-    await ensureContextPreview(workspace!, sessionFile!, { force: true })
-  }, [active, workspace, sessionFile])
+    await ensureContextPreview(workspace!, sessionFile!, model, { force: true })
+  }, [active, workspace, sessionFile, model])
 
-  // Mount / session switch: reuse a fresh shared preview, else fetch once for every consumer.
+  // Mount / session or model switch: reuse a fresh shared preview, else fetch once for all consumers.
   useEffect(() => {
     if (!active) return
-    void ensureContextPreview(workspace!, sessionFile!)
-  }, [active, workspace, sessionFile])
+    void ensureContextPreview(workspace!, sessionFile!, model)
+  }, [active, workspace, sessionFile, model])
 
   // Turn boundary changes the context; concurrent consumers coalesce on the in-flight request.
   const lastRunning = useRef(isRunning)
   useEffect(() => {
     if (lastRunning.current === isRunning) return
     lastRunning.current = isRunning
-    if (active) void ensureContextPreview(workspace!, sessionFile!, { force: true })
-  }, [active, workspace, sessionFile, isRunning])
+    if (active) void ensureContextPreview(workspace!, sessionFile!, model, { force: true })
+  }, [active, workspace, sessionFile, model, isRunning])
 
   useEffect(() => {
     if (!active) return
     const intervalId = isRunning
       ? window.setInterval(
           () =>
-            void ensureContextPreview(workspace!, sessionFile!, {
+            void ensureContextPreview(workspace!, sessionFile!, model, {
               maxAgeMs: RUNNING_CONTEXT_REFRESH_MS - 500,
             }),
           RUNNING_CONTEXT_REFRESH_MS,
         )
       : null
     const onVisibility = () => {
-      if (!document.hidden) void ensureContextPreview(workspace!, sessionFile!)
+      if (!document.hidden) void ensureContextPreview(workspace!, sessionFile!, model)
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       if (intervalId != null) window.clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [active, workspace, sessionFile, isRunning])
+  }, [active, workspace, sessionFile, model, isRunning])
 
   return { preview: active ? entry.preview : null, loading: active && entry.loading, refresh }
 }

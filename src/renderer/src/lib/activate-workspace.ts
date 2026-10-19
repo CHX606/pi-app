@@ -10,6 +10,7 @@ import { captureVisibleLiveSessionTimeline } from '@renderer/lib/capture-live-se
 import { fetchWorkerLiveSnapshot } from '@renderer/lib/session-worker-sync'
 import { focusSessionSync } from '@renderer/lib/session-shell'
 import { sessionFilesEqual } from '@renderer/lib/session-file-key'
+import { isSubagentSessionPreview } from '@renderer/lib/subagent-session-preview'
 import { enterBlankSession, resetBlankSessionProjection } from '@renderer/lib/blank-session-transition'
 import { loadWorkspaceSessionList } from '@renderer/lib/refresh-workspace-session-lists'
 import { workspacePathsEqual } from '@shared/workspace-path'
@@ -181,7 +182,10 @@ export async function switchSessionInPlace(sessionId: string, sessionFile?: stri
 
   // A delayed completion notification may target the session still draining its stream.
   // Keep its live projection and any in-flight hydration intact on repeated opens.
-  if (sessionFilesEqual(store.historySessionFile, file)) {
+  if (
+    sessionFilesEqual(store.historySessionFile, file) &&
+    !isSubagentSessionPreview(store.subagentSessionGroup, file)
+  ) {
     store.markSessionViewed(file)
     return
   }

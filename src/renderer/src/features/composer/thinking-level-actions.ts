@@ -27,7 +27,10 @@ export async function applyThinkingLevel(level: string): Promise<void> {
   const bound = boundThinkingLevelFor(model)
   if (bound && model && bound !== level) void setModelThinkingBinding(model, level).catch(() => {})
   // Draft selections are applied to their own worker when the session is created.
-  if (!sessionFile) return
+  if (!sessionFile) {
+    commitSessionDisplayMeta(null, { thinkingLevel: level })
+    return
+  }
   try {
     await ipcClient.invoke('thinkingLevel.set', { sessionId: '', sessionFile, level })
     commitSessionDisplayMeta(sessionFile, { thinkingLevel: level })

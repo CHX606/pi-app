@@ -47,6 +47,30 @@ describe('useSessionContextPreview shared requests', () => {
     expect(contextPreviewCalls()).toBe(1)
   })
 
+  it('should_keep_model_scoped_results_when_old_preview_finishes_late', async () => {
+    useUIStore.setState({ runState: { ...useUIStore.getState().runState, model: 'custom/old' } })
+    let resolve!: (value: unknown) => void
+    const oldPreview = new Promise((done) => { resolve = done })
+    vi.mocked(ipcClient.invoke)
+      .mockReturnValueOnce(oldPreview)
+      .mockResolvedValue({ preview: { sessionFile: '/sessions/a.jsonl', messageCount: 4, estimatedChars: 40 } })
+    const first = renderHook(() => useSessionContextPreview())
+    const second = renderHook(() => useSessionContextPreview())
+    expect(contextPreviewCalls()).toBe(1)
+
+    act(() => useUIStore.setState({ runState: { ...useUIStore.getState().runState, model: 'custom/new' } }))
+    await waitFor(() => expect(first.result.current.preview?.estimatedChars).toBe(40))
+    await waitFor(() => expect(second.result.current.preview?.estimatedChars).toBe(40))
+    expect(contextPreviewCalls()).toBe(2)
+
+    await act(async () => {
+      resolve({ preview: { sessionFile: '/sessions/a.jsonl', messageCount: 3, estimatedChars: 30 } })
+      await oldPreview
+    })
+    expect(first.result.current.preview?.estimatedChars).toBe(40)
+    expect(second.result.current.preview?.estimatedChars).toBe(40)
+  })
+
   it('refetches once for all consumers when the turn ends', async () => {
     useUIStore.setState({ runState: { status: 'running', toolCount: 0, errorCount: 0 } })
     const first = renderHook(() => useSessionContextPreview())

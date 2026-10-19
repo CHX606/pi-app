@@ -122,6 +122,26 @@ describe('worker model catalog handlers', () => {
 })
 
 describe('worker context preview handler', () => {
+  it.each([
+    { tokens: 42_000, contextWindow: 200_000, percent: 21 },
+    { tokens: null, contextWindow: 200_000, percent: null },
+  ])('preserves SDK usage including unknown post-compaction usage: %j', async (contextUsage) => {
+    st.currentSessionId = 'session-a'
+    st.session = {
+      sessionFile: '/sessions/a.jsonl',
+      messages: [{ role: 'user', content: 'hello' }],
+      getContextUsage: () => contextUsage,
+    } as never
+    const reply = vi.fn()
+
+    await handleGetsessioncontextpreview({ sessionFile: '/sessions/a.jsonl' }, reply)
+
+    expect(reply).toHaveBeenCalledWith({
+      type: 'getSessionContextPreview-done',
+      preview: expect.objectContaining({ contextUsage, estimatedChars: 5 }),
+    })
+  })
+
   it('uses the persisted-message metric even when the live session has a system prompt', async () => {
     st.currentSessionId = 'session-a'
     st.session = {
