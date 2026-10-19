@@ -24,8 +24,10 @@ describe('IPC capability boundaries', () => {
   it('sdk.install validates registry membership', () => {
     const sdk = readFileSync(join(root, 'src/main/ipc/handlers/pi-sdk.ts'), 'utf8')
     const mgr = readFileSync(join(root, 'src/main/sdk-manager.ts'), 'utf8')
-    assert.match(sdk, /isAllowedSdkVersion/)
-    assert.match(mgr, /shell: false/)
+    assert.match(sdk, /if \(!isAllowedSdkVersion\(version, registry\)\)/)
+    assert.ok(sdk.indexOf('if (!isAllowedSdkVersion') < sdk.indexOf('await installVersion'))
+    assert.match(mgr, /process\.platform === 'win32' \? 'npm\.cmd' : 'npm'/)
+    assert.match(mgr, /shell: process\.platform === 'win32'/)
     assert.match(mgr, /AbortSignal\.timeout/)
   })
 
