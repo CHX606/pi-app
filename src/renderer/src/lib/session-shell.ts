@@ -312,7 +312,7 @@ export function bindViewToUiStore(view: SessionView): void {
           view.streamingAssistantId,
         )
 
-  // Run state, worker snapshot and local turn markers are the target session's own
+  // Run state, worker snapshot, local turn markers and the queue are the target session's own
   // (`sessionStates[key]`, kept current by its events while in the background). Only the run
   // status is reconciled with the runtime signals above; nothing comes from the previous view.
   useUIStore.setState({
@@ -322,8 +322,6 @@ export function bindViewToUiStore(view: SessionView): void {
     historyLoadedCount: view.historyLoaded,
     timelineItems: cloneItems(displayItems),
     streamingAssistantId,
-    pendingSteering: [...view.pendingSteering],
-    pendingFollowUp: [...view.pendingFollowUp],
   })
   const target = useUIStore.getState()
   if (target.runState.status !== status) {
@@ -472,7 +470,6 @@ export function focusSessionSync(sessionId: string, sessionFile: string): {
   useUIStore.getState().setHistoryLoading(!instant)
   bindViewToUiStore(view)
   useUIStore.getState().markSessionViewed(sessionFile)
-  useUIStore.getState().clearFileChanges()
   useUIStore.getState().setComposerWidget(getSessionComposerWidget(sessionFile))
   evictSessionViewsIfNeeded()
   reportVisibleSession(sessionFile)

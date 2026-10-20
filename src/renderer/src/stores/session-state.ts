@@ -27,6 +27,9 @@ export interface SessionState {
   pendingFollowUp: string[]
   fileChanges: FileChange[]
   composerWidget: AdapterWidgetProjection | null
+  /** Text pushed into this session's composer (fork / rewind / line refs), consumed once shown. */
+  composerPrefill: string | null
+  composerPrefillMode: 'replace' | 'append'
 }
 
 export type SessionField = Exclude<keyof SessionState, 'key'>
@@ -46,6 +49,8 @@ export const SESSION_FIELDS: readonly SessionField[] = [
   'pendingFollowUp',
   'fileChanges',
   'composerWidget',
+  'composerPrefill',
+  'composerPrefillMode',
 ]
 
 /**
@@ -60,6 +65,13 @@ export const KEYED_SESSION_FIELDS: ReadonlySet<SessionField> = new Set<SessionFi
   'optimisticPendingUserText',
   'agentTurnBootstrapping',
   'pendingTurnStage',
+  // Queue, touched files and composer inputs belong to the session they were made in.
+  'pendingSteering',
+  'pendingFollowUp',
+  'fileChanges',
+  'composerWidget',
+  'composerPrefill',
+  'composerPrefillMode',
 ])
 
 const IDLE_RUN: RunState = { status: 'idle', toolCount: 0, errorCount: 0 }
@@ -80,6 +92,8 @@ export function emptySessionState(key: string): SessionState {
     pendingFollowUp: [],
     fileChanges: [],
     composerWidget: null,
+    composerPrefill: null,
+    composerPrefillMode: 'replace',
   }
 }
 

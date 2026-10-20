@@ -172,6 +172,14 @@ describe('session cross-talk', () => {
       expect(useUIStore.getState().optimisticPendingUserText).toBe('hello A')
     })
 
+    it('keeps background run state when the view switches to a session never opened before', () => {
+      viewA()
+      startTurn(A, 'r-a')
+      focusSessionSync('sid-c', 'C:/w/sessions/c.jsonl')
+      expect(useUIStore.getState().runState.status).toBe('idle')
+      expect(useUIStore.getState().sessionStates[A].runState.status).toBe('running')
+    })
+
     it("does not show the previous session's usage in a new chat", async () => {
       viewA()
       useUIStore.getState().setRunState({ usage: { input: 9, output: 9, cacheRead: 0, cacheWrite: 0, cost: 1 } })
@@ -179,6 +187,68 @@ describe('session cross-talk', () => {
       enterBlankSession('pending-project')
       expect(useUIStore.getState().runState.usage).toBeUndefined()
       expect(useUIStore.getState().sessionStates[A].runState.usage?.input).toBe(9)
+    })
+  })
+
+  describe('step 5 — queue, file changes and composer inputs per session', () => {
+    it("shows a background session's queue only in that session", () => {
+      viewB()
+      useUIStore.getState().processEvent(ev({ type: 'queue', steering: ['steer A'], followUp: ['later A'] }, A))
+      expect(useUIStore.getState().pendingSteering).toEqual([])
+      expect(useUIStore.getState().pendingFollowUp).toEqual([])
+      focusSessionSync('sid-a', A)
+      expect(useUIStore.getState().pendingSteering).toEqual(['steer A'])
+      expect(useUIStore.getState().pendingFollowUp).toEqual(['later A'])
+    })
+
+    it("keeps the visible queue when switching away and back, without leaking it", () => {
+      focusSessionSync('sid-a', A)
+      useUIStore.getState().processEvent(ev({ type: 'queue', steering: ['steer A'], followUp: [] }, A))
+      viewB()
+      expect(useUIStore.getState().pendingSteering).toEqual([])
+      focusSessionSync('sid-a', A)
+      expect(useUIStore.getState().pendingSteering).toEqual(['steer A'])
+    })
+
+    it('records file changes in the session that made them', () => {
+      viewB()
+      useUIStore.getState().processEvent(
+        ev({ type: 'file', path: 'src/a.ts', source: 'tool', changeType: 'modify', runId: 'r-a' }, A),
+      )
+      expect(useUIStore.getState().fileChanges).toEqual([])
+      focusSessionSync('sid-a', A)
+      expect(useUIStore.getState().fileChanges.map((f) => f.path)).toEqual(['src/a.ts'])
+      viewB()
+      focusSessionSync('sid-a', A)
+      expect(useUIStore.getState().fileChanges.map((f) => f.path)).toEqual(['src/a.ts'])
+    })
+
+    it('keeps composer text pushed into one session out of the session switched to', () => {
+      focusSessionSync('sid-a', A)
+      useUIStore.getState().setComposerPrefill('forked prompt for A')
+      viewB()
+      expect(useUIStore.getState().composerPrefill).toBeNull()
+      focusSessionSync('sid-a', A)
+      expect(useUIStore.getState().composerPrefill).toBe('forked prompt for A')
+    })
+
+    it("does not project a background session's extension widget onto the visible composer", () => {
+      viewB()
+      useUIStore.getState().processEvent(
+        ev(
+          {
+            type: 'extension_widget',
+            phase: 'set',
+            widgetKey: 'goal',
+            adapterId: 'goal',
+            protocol: 'tasks',
+            state: { title: 'A goal' },
+          },
+          A,
+        ),
+      )
+      expect(useUIStore.getState().composerWidget).toBeNull()
+      expect(useUIStore.getState().sessionStates[A].composerWidget).toEqual({ title: 'A goal' })
     })
   })
 })

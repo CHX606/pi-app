@@ -52,7 +52,6 @@ export async function activateWorkspace(path: string, options?: ActivateWorkspac
   }
 
   store.setWorkspace(path)
-  store.clearFileChanges()
   useExtensionUIStore.getState().parkForSessionSwitch()
 
   const openingSession = !!(options?.sessionId && options?.sessionFile)

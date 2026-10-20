@@ -1,27 +1,13 @@
-import { normalizeSessionFileKey } from '@renderer/lib/session-file-key'
+import { viewSessionKeyOf, type ViewKeyInput } from '@renderer/stores/session-state'
 import type { Segment } from './attachments'
 
-export type ComposerDraftContext = {
-  currentWorkspace: string | null
-  currentSessionId: string | null
-  historySessionFile: string | null
-  ephemeralSandboxDraft: boolean
-  pendingNewSessionPlaceholder: boolean
-}
+export type ComposerDraftContext = ViewKeyInput
 
+/** Unsent composer text per session; keyed exactly like `sessionStates` (session file or draft). */
 const transientDrafts = new Map<string, Segment[]>()
 
 export function composerDraftContextKey(context: ComposerDraftContext): string {
-  if (context.ephemeralSandboxDraft) return 'ephemeral'
-  if (context.pendingNewSessionPlaceholder) {
-    return `pending:${context.currentWorkspace || ''}`
-  }
-  const sessionFile = normalizeSessionFileKey(context.historySessionFile)
-  if (sessionFile) return `file:${sessionFile}`
-  if (context.currentSessionId) {
-    return `session:${context.currentWorkspace || ''}:${context.currentSessionId}`
-  }
-  return `workspace:${context.currentWorkspace || ''}`
+  return viewSessionKeyOf(context)
 }
 
 export function rememberTransientComposerDraft(contextKey: string, segments: Segment[]): void {
