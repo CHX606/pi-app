@@ -568,34 +568,3 @@ describe('worker process exit', () => {
     }
   })
 })
-
-describe('host wiring hooks', () => {
-  it('fails browser tools fast when no browser bridge is installed (headless host)', async () => {
-    const { installBrowserToolBridge } = await import('../worker-manager-pool')
-    installBrowserToolBridge(null)
-    const t = makeFakeTransport()
-    const slot = { ...fakeSlot('/w/s.jsonl', '/w', true), worker: t }
-    attachWorkerHandlers(slot, t, { mainWindow: null, onAppEvent: () => {}, onSlotExit: () => {} })
-    t.emitMessage({ type: 'browser-tool-request', callId: 'c1', tool: 'browser_open' } as WorkerResponsePayload)
-    expect(t.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'browser-tool-response', callId: 'c1', result: expect.objectContaining({ isError: true }) }),
-    )
-  })
-
-  it('starts host-mode workers through the installed launcher', async () => {
-    const { forkWorkerForCwd, installHostWorkerLauncher } = await import('../worker-manager-pool')
-    const t = makeFakeTransport()
-    const launcher = vi.fn(() => ({ transport: t, sdkPath: '/sdk/index.js' }))
-    installHostWorkerLauncher(launcher)
-    try {
-      const { slot, init } = await forkWorkerForCwd('/w')
-      expect(launcher).toHaveBeenCalledWith('/w')
-      expect(slot.worker).toBe(t)
-      expect(t.postMessage).toHaveBeenCalledWith({ type: 'init', cwd: '/w', sdkPath: '/sdk/index.js' })
-      slot.initRejecter?.(new Error('done'))
-      await expect(init).rejects.toThrow('done')
-    } finally {
-      installHostWorkerLauncher(null)
-    }
-  })
-})

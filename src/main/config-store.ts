@@ -1,3 +1,4 @@
+import Store from 'electron-store'
 import type { AsrConfig } from '@shared/asr-types'
 import type { BackgroundSettings } from '@shared/background'
 import type { CustomCssOverride, CustomTheme } from '@shared/custom-theme'
@@ -93,109 +94,79 @@ export interface StoreSchema {
   wslSdkCache?: Record<string, { at: number; value: import('./wsl/sdk-resolve').WslSdkResolution | null }>
 }
 
-/** Defaults every backing merges under stored values (electron-store `defaults` semantics). */
-export const CONFIG_DEFAULTS: StoreSchema = {
-  recentProjects: [],
-  recentProjectsFixedOrder: false,
-  currentProject: null,
-  windowBounds: null,
-  theme: 'system',
-  iconTheme: DEFAULT_ICON_THEME,
-  customTheme: null,
-  customCssOverride: { enabled: false, css: '' },
-  background: { shared: true },
-  panelWidths: null,
-  extensionOverrides: {},
-  skillOverrides: {},
-  skillPresentation: {},
-  extensionConfigs: {},
-  rightPanelPrefs: {
-    review: true,
-    'adapter:trellis': true,
-    run: true,
-    context: true,
-    intercom: false,
-    tree: true,
+const store = new Store<StoreSchema>({
+  name: 'pi-desktop',
+  defaults: {
+    recentProjects: [],
+    recentProjectsFixedOrder: false,
+    currentProject: null,
+    windowBounds: null,
+    theme: 'system',
+    iconTheme: DEFAULT_ICON_THEME,
+    customTheme: null,
+    customCssOverride: { enabled: false, css: '' },
+    background: { shared: true },
+    panelWidths: null,
+    extensionOverrides: {},
+    skillOverrides: {},
+    skillPresentation: {},
+    extensionConfigs: {},
+    rightPanelPrefs: {
+      review: true,
+      'adapter:trellis': true,
+      run: true,
+      context: true,
+      intercom: false,
+      tree: true,
+    },
+    rightPanelOrder: [],
+    language: defaultAppLanguage(),
+    autoOpenLastProject: true,
+    autoCheckRegistryUpdates: true,
+    includePrereleaseUpdates: false,
+    lastUpdateCheckAt: 0,
+    ignoredUpdateVersion: '',
+    alertSoundEnabled: true,
+    alertNotificationEnabled: true,
+    alertOnExtensionUi: true,
+    alertOnRunIdle: true,
+    alertOnBackgroundRunIdle: false,
+    alertOnRunFailed: true,
+    completionNotificationTimeoutSeconds: 15,
+    completionNotificationPreview: 'response',
+    completionNotificationOnlyWhenUnfocused: true,
+    completionNotificationDndUntil: null,
+    completionNotificationDelivery: 'auto',
+    maxSessionWorkers: 4,
+    sessionWorkerIdleTimeoutMinutes: 15,
+    timelineMaxAutoExpandedTools: DEFAULT_TIMELINE_MAX_AUTO_EXPANDED_TOOLS,
+    timelineVisibleTurns: DEFAULT_TIMELINE_VISIBLE_TURNS,
+    sessionDisplayNames: {},
+    asrConfig: {
+      provider: 'codex-asr-builtin',
+      language: 'auto',
+      timeoutMs: 120000,
+      builtinServePort: 18788,
+    } as AsrConfig,
+    agentRuntime: { mode: 'host', distro: null },
+    browserSearchEngine: 'bing',
+    browserDownloader: 'auto',
+    browserAria2Path: '',
+    browserAgentCdp: 'auto',
+    browserChromeBridge: { enabled: false, port: 19825, token: '' },
+    browserDownloadConnections: 16,
+    sessionCapabilities: {},
   },
-  rightPanelOrder: [],
-  language: defaultAppLanguage(),
-  autoOpenLastProject: true,
-  autoCheckRegistryUpdates: true,
-  includePrereleaseUpdates: false,
-  lastUpdateCheckAt: 0,
-  ignoredUpdateVersion: '',
-  alertSoundEnabled: true,
-  alertNotificationEnabled: true,
-  alertOnExtensionUi: true,
-  alertOnRunIdle: true,
-  alertOnBackgroundRunIdle: false,
-  alertOnRunFailed: true,
-  completionNotificationTimeoutSeconds: 15,
-  completionNotificationPreview: 'response',
-  completionNotificationOnlyWhenUnfocused: true,
-  completionNotificationDndUntil: null,
-  completionNotificationDelivery: 'auto',
-  maxSessionWorkers: 4,
-  sessionWorkerIdleTimeoutMinutes: 15,
-  timelineMaxAutoExpandedTools: DEFAULT_TIMELINE_MAX_AUTO_EXPANDED_TOOLS,
-  timelineVisibleTurns: DEFAULT_TIMELINE_VISIBLE_TURNS,
-  sessionDisplayNames: {},
-  asrConfig: {
-    provider: 'codex-asr-builtin',
-    language: 'auto',
-    timeoutMs: 120000,
-    builtinServePort: 18788,
-  } as AsrConfig,
-  agentRuntime: { mode: 'host', distro: null },
-  browserSearchEngine: 'bing',
-  browserDownloader: 'auto',
-  browserAria2Path: '',
-  browserAgentCdp: 'auto',
-  browserChromeBridge: { enabled: false, port: 19825, token: '' },
-  browserDownloadConnections: 16,
-  sessionCapabilities: {},
-}
+})
 
-/**
- * Where settings live. The desktop installs an electron-store backing (`electron-store-bindings.ts`,
- * imported first by `index.ts`); the headless host installs a JSON file (`config-store-json.ts`).
- * Keeping the store itself out of this module keeps Electron out of everything that reads settings.
- */
-export interface ConfigBacking {
-  get(key: string): unknown
-  set(key: string, value: unknown): void
-  delete?(key: string): void
-  /** Every stored value merged over the defaults. */
-  readonly store: Record<string, unknown>
-}
-
-let backing: ConfigBacking | null = null
-
-export function installConfigBacking(next: ConfigBacking): void {
-  backing = next
-  bindSecretStoreBacking({
-    get: (k) => next.get(k),
-    set: (k, v) => next.set(k, v),
-    delete: (k) => next.delete?.(k),
-  })
-}
-
-function installed(): ConfigBacking {
-  if (!backing) throw new Error('config store used before a backing was installed')
-  return backing
-}
-
-const store = {
-  get<K extends keyof StoreSchema>(key: K): StoreSchema[K] {
-    return installed().get(key) as StoreSchema[K]
+bindSecretStoreBacking({
+  get: (k) => store.get(k as keyof StoreSchema),
+  set: (k, v) => store.set(k as keyof StoreSchema, v as StoreSchema[keyof StoreSchema]),
+  delete: (k) => {
+    const s = store as { delete?: (key: string) => void }
+    if (typeof s.delete === 'function') s.delete(k)
   },
-  set<K extends keyof StoreSchema>(key: K, value: StoreSchema[K]): void {
-    installed().set(key, value)
-  },
-  get store(): Partial<StoreSchema> {
-    return installed().store as Partial<StoreSchema>
-  },
-}
+})
 
 export const configStore = {
   get<K extends keyof StoreSchema>(key: K): StoreSchema[K] {

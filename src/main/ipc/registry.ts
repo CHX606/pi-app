@@ -1,3 +1,4 @@
+import { ipcMain, type BrowserWindow } from 'electron'
 import type { AppEvent } from '@shared/app-events'
 import { z, type ZodSchema } from 'zod'
 
@@ -9,26 +10,6 @@ export type IpcHandlerFn = (request: any) => Promise<any>
 
 const handlers = new Map<string, IpcHandlerFn>()
 
-/** The slice of Electron's `ipcMain` the registry uses. */
-export type IpcMainLike = {
-  handle(channel: string, listener: (event: unknown, request: unknown) => Promise<unknown>): void
-  removeHandler(channel: string): void
-}
-
-/** Structural BrowserWindow, so this module stays free of Electron imports. */
-type EventWindow = { isDestroyed(): boolean; webContents: { send(channel: string, ...args: unknown[]): void } }
-
-let ipc: IpcMainLike | null = null
-
-/**
- * Expose registered handlers to the renderer. The desktop binds Electron's `ipcMain` (index.ts);
- * the headless host never does, so its handlers are reachable through `invokeHandler` only.
- * Handlers registered before the bind are exposed at bind time.
- */
-export function bindIpcMain(next: IpcMainLike): void {
-  ipc = next
-  for (const channel of handlers.keys()) exposeHandler(channel)
-}
 /**
  * Dev diagnostics (PI_PERF_TRACE=1): per-channel timings — `sync` is how long the handler held the
  * main thread before yielding, `total` includes awaited work — plus an event-loop stall monitor.
@@ -46,17 +27,11 @@ if (PERF_TRACE) {
 }
 
 export function registerHandler(channel: string, handler: IpcHandlerFn): void {
+  if (handlers.has(channel)) {
+    ipcMain.removeHandler(channel)
+  }
   handlers.set(channel, handler)
-  exposeHandler(channel)
-}
-
-function exposeHandler(channel: string): void {
-  if (!ipc) return
-  // Electron refuses a second handle() for a channel; replace instead.
-  ipc.removeHandler(channel)
-  ipc.handle(channel, async (_event, request) => {
-    const handler = handlers.get(channel)
-    if (!handler) throw new Error(`No IPC handler for ${channel}`)
+  ipcMain.handle(channel, async (_event, request) => {
     const started = PERF_TRACE ? Date.now() : 0
     try {
       const pending = handler(request as IpcInvokeBody)
@@ -99,7 +74,7 @@ export async function invokeHandler<T = unknown>(channel: string, request?: IpcI
   return (await handler(request ?? {})) as T
 }
 
-export function sendEvent(win: EventWindow, event: AppEvent): void {
+export function sendEvent(win: BrowserWindow, event: AppEvent): void {
   if (!win.isDestroyed()) {
     win.webContents.send('ipc:events', event)
   }

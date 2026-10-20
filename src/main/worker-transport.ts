@@ -1,20 +1,19 @@
 /**
- * Transport abstraction over a worker process. Three implementations:
- *  - `utilityProcess` (desktop host mode): Electron utilityProcess + message port,
- *    see `worker-launcher-electron.ts`
+ * Transport abstraction over a worker process. Two implementations:
+ *  - `utilityProcess` (host mode): Electron utilityProcess + message port
  *  - `wsl` (WSL mode): `wsl.exe -d <distro> --cd ... -- node worker.mjs` with
  *    prefixed JSONL framing over stdout / stdin
- *  - `node` (headless host): `node worker.mjs` as a plain child process, same framing as WSL
  */
 
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { StringDecoder } from 'node:string_decoder'
-import { decodeWorkerFrameLine, WORKER_STDIO_ENV } from '@shared/worker-frame'
+import type { UtilityProcess } from 'electron'
+import { decodeWorkerFrameLine } from '@shared/worker-frame'
 import type { WorkerResponsePayload } from '@shared/worker-rpc-types'
 import { spawnWorkerInWsl } from './wsl/worker-host'
 
 export interface WorkerTransport {
-  readonly kind: 'utilityProcess' | 'wsl' | 'node'
+  readonly kind: 'utilityProcess' | 'wsl'
   readonly pid?: number
   postMessage(message: Record<string, unknown>): void
   onMessage(callback: (message: WorkerResponsePayload) => void): void
@@ -24,8 +23,55 @@ export interface WorkerTransport {
   kill(): void
 }
 
-/** A worker child speaking prefixed JSONL frames on stdout and plain JSONL on stdin. */
-function createStdioChildTransport(child: ChildProcess, kind: 'wsl' | 'node'): WorkerTransport {
+export function createUtilityProcessTransport(proc: UtilityProcess): WorkerTransport {
+  return {
+    kind: 'utilityProcess',
+    get pid() {
+      return proc.pid
+    },
+    postMessage: (message) => proc.postMessage(message),
+    onMessage: (cb) => {
+      proc.on('message', (event: { data?: WorkerResponsePayload } | WorkerResponsePayload) => {
+        const data =
+          typeof event === 'object' && event !== null && 'data' in event
+            ? (event as { data?: WorkerResponsePayload }).data
+            : (event as WorkerResponsePayload)
+        if (data) cb(data)
+      })
+    },
+    onExit: (cb) => {
+      proc.on('exit', (code) => cb(code))
+    },
+    onStdout: (cb) => {
+      const s = proc.stdout
+      if (s) {
+        s.on('error', () => {})
+        s.on('data', (chunk: Buffer) => cb(chunk.toString()))
+      }
+    },
+    onStderr: (cb) => {
+      const s = proc.stderr
+      if (s) {
+        s.on('error', () => {})
+        s.on('data', (chunk: Buffer) => cb(chunk.toString()))
+      }
+    },
+    kill: () => {
+      try {
+        proc.kill()
+      } catch {
+        /* ignore */
+      }
+    },
+  }
+}
+
+export function createWslWorkerTransport(opts: {
+  distro: string
+  wslCwd: string
+  workerWslPath: string
+}): WorkerTransport {
+  const child = spawnWorkerInWsl(opts)
   let messageCb: ((message: WorkerResponsePayload) => void) | null = null
   let exitCb: ((code: number) => void) | null = null
   let stdoutCb: ((chunk: string) => void) | null = null
@@ -43,7 +89,7 @@ function createStdioChildTransport(child: ChildProcess, kind: 'wsl' | 'node'): W
       if (msg) {
         messageCb?.(msg as WorkerResponsePayload)
       } else if (line.trim()) {
-        stderrCb?.(`[${kind}-stdout] ${line}\n`)
+        stderrCb?.(`[wsl-stdout] ${line}\n`)
       }
       idx = frameBuffer.indexOf('\n')
     }
@@ -52,7 +98,7 @@ function createStdioChildTransport(child: ChildProcess, kind: 'wsl' | 'node'): W
     stderrCb?.(chunk.toString())
   })
   child.on('error', (err) => {
-    stderrCb?.(`[${kind}] ${String(err?.message ?? err)}\n`)
+    stderrCb?.(`[wsl] ${String(err?.message ?? err)}\n`)
     exitCb?.(-1)
   })
   child.on('exit', (code) => {
@@ -60,7 +106,7 @@ function createStdioChildTransport(child: ChildProcess, kind: 'wsl' | 'node'): W
   })
 
   return {
-    kind,
+    kind: 'wsl',
     get pid() {
       return child.pid
     },
@@ -89,29 +135,4 @@ function createStdioChildTransport(child: ChildProcess, kind: 'wsl' | 'node'): W
       }
     },
   }
-}
-
-export function createWslWorkerTransport(opts: {
-  distro: string
-  wslCwd: string
-  workerWslPath: string
-}): WorkerTransport {
-  return createStdioChildTransport(spawnWorkerInWsl(opts), 'wsl')
-}
-
-/** `node <entry>` in `cwd` with stdio framing (no Electron): the headless host's workers. */
-export function createNodeWorkerTransport(opts: {
-  entry: string
-  cwd: string
-  /** Node binary; defaults to the one running this process. */
-  node?: string
-  env?: NodeJS.ProcessEnv
-}): WorkerTransport {
-  const child = spawn(opts.node ?? process.execPath, [opts.entry], {
-    cwd: opts.cwd,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-    env: { ...process.env, ...opts.env, [WORKER_STDIO_ENV]: '1' },
-  })
-  return createStdioChildTransport(child, 'node')
 }

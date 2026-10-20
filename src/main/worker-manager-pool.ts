@@ -1,29 +1,23 @@
+import { utilityProcess, app, type BrowserWindow } from 'electron'
 import type { AppEvent } from '@shared/app-events'
 import { remoteTap } from './remote/tap'
 import type { WorkerResponsePayload } from '@shared/worker-rpc-types'
 import { windowsPathToWsl } from '@shared/wsl-path'
-import type { BrowserToolBridge, HostWorkerLauncher, RendererWindow, WorkerInitResult, WorkerSlot } from './worker-manager-types'
+import { resolveActiveSdk } from './sdk-loader'
+import type { WorkerInitResult, WorkerSlot } from './worker-manager-types'
 import { readMaxSessionWorkers, minutesToIdleDelayMs, readSessionWorkerIdleTimeoutMinutes } from './worker-pool-config'
 import { normalizeSessionKey, workspacePoolKey } from './worker-session-key'
-import { createWslWorkerTransport, type WorkerTransport } from './worker-transport'
+import {
+  createUtilityProcessTransport,
+  createWslWorkerTransport,
+  type WorkerTransport,
+} from './worker-transport'
 import { getAgentRuntimeConfig } from './wsl/runtime-config'
 import { resolveWslActiveSdk } from './wsl/sdk-resolve'
 import { syncWorkerBundleToWsl } from './wsl/worker-host'
+import { resolveUtilityEntry } from './utility-entry-path'
 
 export const extensionUiDialogSource = new Map<string, WorkerSlot>()
-
-let hostWorkerLauncher: HostWorkerLauncher | null = null
-let browserToolBridge: (() => Promise<BrowserToolBridge>) | null = null
-
-/** Desktop: utilityProcess (`worker-launcher-electron.ts`); headless host: a node child. */
-export function installHostWorkerLauncher(launcher: HostWorkerLauncher | null): void {
-  hostWorkerLauncher = launcher
-}
-
-/** Desktop only. Without a bridge, browser tools fail fast instead of waiting for a reply. */
-export function installBrowserToolBridge(load: (() => Promise<BrowserToolBridge>) | null): void {
-  browserToolBridge = load
-}
 
 const WORKER_REQUEST_TIMEOUT_MS = 120_000
 /** Stop-time abort deadline: a responsive worker answers in ms; a hung one must not hold quit/eviction for 2 minutes. */
@@ -43,7 +37,7 @@ export function dismissExtensionUiRequestsForSlot(
 
 function clearExtensionUiSourcesForSlot(
   slot: WorkerSlot,
-  win?: RendererWindow | null,
+  win?: BrowserWindow | null,
 ): void {
   dismissExtensionUiRequestsForSlot(
     slot,
@@ -133,7 +127,7 @@ export function attachWorkerHandlers(
   slot: WorkerSlot,
   transport: WorkerTransport,
   opts: {
-    mainWindow: RendererWindow | null
+    mainWindow: BrowserWindow | null
     onAppEvent: (payload: {
       event: AppEvent
       fromCwd: string
@@ -236,23 +230,18 @@ export function attachWorkerHandlers(
     }
 
     if (data.type === 'browser-tool-request') {
-      const post = (message: Record<string, unknown>) => {
-        if (slot.worker === transport) transport.postMessage(message)
-      }
-      if (!browserToolBridge) {
-        const callId = String(data.callId ?? '')
-        const result = { content: [{ type: 'text', text: 'browser_unsupported: this host has no browser' }], isError: true }
-        if (callId) post({ type: 'browser-tool-response', callId, result })
-      } else {
-        // Loaded on first use: the bridge pulls in Electron views and the config store.
-        void browserToolBridge()
-          .then(({ handleBrowserToolRequest }) => handleBrowserToolRequest(data, slot, post))
-          .catch((error) => safeWrite(`[WorkerManager] browser tool failed: ${String(error)}`))
-      }
+      // Loaded on first use: the bridge pulls in Electron views and the config store.
+      void import('./browser/browser-tool-bridge')
+        .then(({ handleBrowserToolRequest }) =>
+          handleBrowserToolRequest(data, slot, (message) => {
+            if (slot.worker === transport) transport.postMessage(message)
+          }),
+        )
+        .catch((error) => safeWrite(`[WorkerManager] browser tool failed: ${String(error)}`))
     }
 
-    if (data.type === 'browser-tool-cancel' && browserToolBridge) {
-      void browserToolBridge()
+    if (data.type === 'browser-tool-cancel') {
+      void import('./browser/browser-tool-bridge')
         .then(({ cancelBrowserToolRequest }) => cancelBrowserToolRequest(String(data.callId ?? '')))
         .catch(() => undefined)
     }
@@ -298,7 +287,7 @@ export function attachWorkerHandlers(
 
 export async function disposeWorkerSlot(
   slot: WorkerSlot,
-  mainWindow?: RendererWindow | null,
+  mainWindow?: BrowserWindow | null,
 ): Promise<void> {
   slot.stopping = true
   clearExtensionUiSourcesForSlot(slot, mainWindow)
@@ -397,10 +386,10 @@ export async function forkWorkerForCwd(
     })
     sdkPath = sdk.entryPath
   } else {
-    if (!hostWorkerLauncher) throw new Error('No host worker launcher installed')
-    const launched = hostWorkerLauncher(cwd)
-    transport = launched.transport
-    sdkPath = launched.sdkPath
+    const forked = utilityProcess.fork(resolveUtilityEntry('worker.mjs'), [], { stdio: 'pipe' })
+    transport = createUtilityProcessTransport(forked)
+    const activeSdk = resolveActiveSdk(app.getPath('userData'))
+    sdkPath = activeSdk.kind === 'builtin' ? null : activeSdk.entryPath
   }
   const slot = createSlot(poolKey, cwd, runtime, transport, opts?.sessionFile ?? null)
   const initPromise = new Promise<WorkerInitResult>((resolve, reject) => {
@@ -445,7 +434,7 @@ export async function evictIdleWorkers(
   opts: {
     foregroundKey: string | null
     maxWorkers?: number
-    mainWindow?: RendererWindow | null
+    mainWindow?: BrowserWindow | null
   },
 ): Promise<void> {
   const maxWorkers = opts.maxWorkers ?? readMaxSessionWorkers()
@@ -473,7 +462,7 @@ export function pruneIdleWorkersByTimeout(
   pool: Map<string, WorkerSlot>,
   foregroundKey: string | null,
   nowMs = Date.now(),
-  mainWindow?: RendererWindow | null,
+  mainWindow?: BrowserWindow | null,
 ): number {
   const delay = minutesToIdleDelayMs(readSessionWorkerIdleTimeoutMinutes())
   if (delay == null) return 0

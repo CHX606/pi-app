@@ -1,11 +1,8 @@
 import './bootstrap-path'
-import './electron-store-bindings'
-import './worker-launcher-electron'
-import { app, shell, type BrowserWindow, dialog, session, Menu, ipcMain } from 'electron'
+import { app, shell, type BrowserWindow, dialog, session, Menu } from 'electron'
 import { createWindow, getMainWindow } from './window'
 import { refreshGitWorkspaceWatch } from './git-workspace-watch'
 import { registerAllHandlers } from './ipc'
-import { bindIpcMain } from './ipc/registry'
 import { workerManager } from './worker-manager'
 import { sessionPreviewProcess } from './session-preview-process'
 import { guardAppQuit, setRunningTerminalsProbe } from './window-close-guard'
@@ -123,7 +120,6 @@ app.whenReady().then(() => {
       })
     }
   }
-  bindIpcMain(ipcMain)
   registerAllHandlers()
   void import('./clipboard-temp-images').then(({ pruneStaleClipboardImages }) => {
     try {

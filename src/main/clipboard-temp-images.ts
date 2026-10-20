@@ -1,4 +1,4 @@
-import { userDataDir } from './app-paths'
+import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { randomUUID } from 'crypto'
@@ -7,7 +7,7 @@ const tracked = new Set<string>()
 
 /** Durable dir under userData — OS temp may be cleaned while the agent still needs the file. */
 export function resolveClipboardImageDir(): string {
-  const dir = join(userDataDir(), 'clipboard-images')
+  const dir = join(app.getPath('userData'), 'clipboard-images')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
 }
