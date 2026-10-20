@@ -2,6 +2,8 @@
 // remembers one session; exactly one pane is active (it hosts the real timeline + composer of
 // the focused session). Layout only — sessions and their workers are untouched by anything here.
 
+import { sessionFilesEqual } from '@shared/session-file-key'
+
 export interface PaneSession {
   sessionId: string
   sessionFile: string
@@ -53,7 +55,8 @@ export function singleLayout(session: PaneSession | null = null, id = newPaneId(
   return makeLayout(leaf({ id, session }), id)
 }
 
-const sameSession = (a: PaneSession | null, b: PaneSession | null) => !!a && !!b && a.sessionFile === b.sessionFile
+// Path spelling differs by source (sidebar rows vs the store use different separators on Windows).
+const sameSession = (a: PaneSession | null, b: PaneSession | null) => !!a && !!b && sessionFilesEqual(a.sessionFile, b.sessionFile)
 
 function mapLeaves(node: LayoutNode, fn: (p: Pane) => Pane): LayoutNode {
   return node.kind === 'pane' ? leaf(fn(node.pane)) : { ...node, a: mapLeaves(node.a, fn), b: mapLeaves(node.b, fn) }
