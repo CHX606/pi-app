@@ -138,11 +138,12 @@ export function ModelPicker() {
         modelId: m.id,
       })
       if (token !== modelSwitchToken) return
+      const actualModel = response.modelId || requestedModel
+      // The confirmed model belongs to the session it was set on, even if the view moved on.
+      useUIStore.getState().setSessionRunState(targetFile, { model: actualModel })
+      commitSessionDisplayMeta(targetFile, { model: actualModel })
       const now = useUIStore.getState()
       if (!sessionFilesEqual(now.historySessionFile, targetFile)) return
-      const actualModel = response.modelId || requestedModel
-      now.setRunState({ model: actualModel })
-      commitSessionDisplayMeta(targetFile, { model: actualModel })
       setRecents(rememberRecentModel(actualModel))
       if (pendingModelSwitch?.token === token) pendingModelSwitch = null
       setOpen(false)

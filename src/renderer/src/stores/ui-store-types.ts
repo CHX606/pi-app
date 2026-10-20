@@ -280,5 +280,11 @@ export interface UIState {
   promoteViewSession: (target: { sessionId: string; sessionFile: string }) => void
   /** Install a previously captured session state as the viewed session's state. */
   adoptViewSessionState: (state: SessionState) => void
+  /**
+   * Patch one session's run state (by session file or session key), whether or not it is visible.
+   * Async results (model/thinking confirmations, meta refreshes) use this with the key they were
+   * started for, so a switch while they await can never land them on another session.
+   */
+  setSessionRunState: (session: string, patch: Partial<RunState>) => void
   processEvent: (event: AppEvent) => void
 }

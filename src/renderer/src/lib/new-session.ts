@@ -52,6 +52,8 @@ export async function materializePendingNewSession(
   // Apply the user's pre-selected model/thinking level to the new session. Sequential on purpose:
   // the thinking level is clamped against the model's supported levels, so it must follow a
   // confirmed model switch (and is skipped when the switch is rejected).
+  // `store` is the snapshot taken when the user sent, while the view was the draft: these are the
+  // draft's own choices, not whatever session is visible now.
   const { runState } = store
   if (sessionFile) {
     if (runState.model && runState.model.includes('/')) {

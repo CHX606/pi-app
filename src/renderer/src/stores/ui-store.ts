@@ -21,7 +21,13 @@ import { createShellSlice } from '@renderer/stores/ui-store-shell-slice'
 import { createRuntimeSlice } from '@renderer/stores/ui-store-runtime-slice'
 import { workspacePathKey } from '@shared/workspace-path'
 import { isAbortQueueIgnoreActive } from '@renderer/lib/abort-ui-hold'
-import { reconcileSessionMirror, selectViewSession, sessionKeyOf } from '@renderer/stores/session-state'
+import {
+  isDraftSessionKey,
+  reconcileSessionMirror,
+  seedSessionState,
+  selectViewSession,
+  sessionKeyOf,
+} from '@renderer/stores/session-state'
 import {
   applyRunStatePatch,
   insertTimelineItemBefore,
@@ -94,6 +100,20 @@ export const useUIStore = create<UIState>()(
             workerLiveSnapshot: { ...draft.workerLiveSnapshot, sessionId, sessionFile: key },
           },
         },
+      }
+    }),
+  setSessionRunState: (session, patch) =>
+    set((s) => {
+      const key = s.sessionStates[session] || isDraftSessionKey(session) ? session : sessionKeyOf(session)
+      if (!key) return s
+      const entry = s.sessionStates[key] ?? seedSessionState(key, s)
+      const { runState, model, thinkingLevel } = applyRunStatePatch(entry.runState, patch)
+      const viewing = key === s.viewSessionKey
+      return {
+        sessionStates: { ...s.sessionStates, [key]: { ...entry, runState } },
+        // The visible session's choices are the user's current defaults.
+        ...(viewing && model !== undefined ? { lastModel: model } : {}),
+        ...(viewing && thinkingLevel !== undefined ? { lastThinking: thinkingLevel } : {}),
       }
     }),
   adoptViewSessionState: (state) =>
