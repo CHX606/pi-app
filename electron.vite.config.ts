@@ -79,6 +79,9 @@ export default defineConfig({
         input: resolve(__dirname, 'src/renderer/index.html'),
         output: {
           manualChunks(id) {
+            // Grammars and themes stay in their own chunks so shiki-highlighter's per-language
+            // dynamic imports load on demand instead of pulling every grammar at once.
+            if (/(?:@shikijs|shiki\/dist)\/(?:langs|themes)\//.test(id)) return undefined
             if (id.includes('node_modules/shiki') || id.includes('@shikijs')) return 'shiki'
             if (id.includes('node_modules/react-dom')) return 'react-dom'
             if (id.includes('node_modules/react/')) return 'react'
