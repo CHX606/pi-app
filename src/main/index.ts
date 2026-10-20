@@ -1,5 +1,6 @@
 import './bootstrap-path'
 import './electron-store-bindings'
+import './worker-launcher-electron'
 import { app, shell, type BrowserWindow, dialog, session, Menu } from 'electron'
 import { createWindow, getMainWindow } from './window'
 import { refreshGitWorkspaceWatch } from './git-workspace-watch'

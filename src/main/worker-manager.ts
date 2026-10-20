@@ -1,6 +1,5 @@
 // Worker Manager - multi-session utility process pool (sessionKey + workspace keys)
 
-import { type BrowserWindow } from 'electron'
 import type { AdapterCatalog } from '../extension-compat/adapter-schema'
 import type { AppEvent } from '@shared/app-events'
 import type {
@@ -29,7 +28,7 @@ import {
   remapSessionWorkerSlot,
   slotRequest,
 } from './worker-manager-pool'
-import type { WorkerInitResult, WorkerSlot } from './worker-manager-types'
+import type { RendererWindow, WorkerInitResult, WorkerSlot } from './worker-manager-types'
 import { normalizeSessionKey, workspacePoolKey } from './worker-session-key'
 import { isWslWindowsPath } from '@shared/wsl-path'
 import { getAgentRuntimeConfig, isWslRuntimeActive } from './wsl/runtime-config'
@@ -51,14 +50,14 @@ import { remoteTap } from './remote/tap'
 interface InitResult extends WorkerInitResult {}
 
 export class WorkerManager {
-  private mainWindow: BrowserWindow | null = null
+  private mainWindow: RendererWindow | null = null
   /** Key: session abs path or `ws:${cwd}` */
   private pool = new Map<string, WorkerSlot>()
   private foregroundPoolKey: string | null = null
   private lifecycleChain: Promise<unknown> = Promise.resolve()
   private idleTimer: ReturnType<typeof setInterval> | null = null
 
-  setMainWindow(win: BrowserWindow): void {
+  setMainWindow(win: RendererWindow): void {
     this.mainWindow = win
     this.ensureIdleTimer()
   }

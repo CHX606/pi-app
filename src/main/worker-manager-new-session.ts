@@ -1,4 +1,3 @@
-import type { BrowserWindow } from 'electron'
 import {
   attachWorkerHandlers,
   canAcquireNewWorker,
@@ -8,14 +7,14 @@ import {
   remapSessionWorkerSlot,
   slotRequest,
 } from './worker-manager-pool'
-import type { WorkerAppEventForward, WorkerSlot } from './worker-manager-types'
+import type { RendererWindow, WorkerAppEventForward, WorkerSlot } from './worker-manager-types'
 import { readMaxSessionWorkers } from './worker-pool-config'
 import { normalizeSessionKey, workspacePoolKey } from './worker-session-key'
 
 export type NewSessionPoolOptions = {
   cwd: string
   pool: Map<string, WorkerSlot>
-  mainWindow: BrowserWindow | null
+  mainWindow: RendererWindow | null
   foregroundPoolKey: () => string | null
   slotMatchesCurrentRuntime: (slot: WorkerSlot) => boolean
   setForeground: (slot: WorkerSlot) => void

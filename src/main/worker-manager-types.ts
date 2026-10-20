@@ -37,6 +37,28 @@ export type WorkerSlot = {
   identityOpsInFlight?: number
 }
 
+/**
+ * The part of a BrowserWindow the worker pool talks to. Structural so the pool never imports
+ * Electron; the headless host simply has no window (null).
+ */
+export type RendererWindow = {
+  isDestroyed(): boolean
+  webContents: { send(channel: string, ...args: unknown[]): void }
+}
+
+/** Starts a worker for host-mode runtimes (desktop: utilityProcess; headless: node child). */
+export type HostWorkerLauncher = (cwd: string) => { transport: WorkerTransport; sdkPath: string | null }
+
+/** Serves `browser-tool-*` requests from workers (desktop only: needs Electron views). */
+export type BrowserToolBridge = {
+  handleBrowserToolRequest(
+    data: Record<string, unknown>,
+    slot: { cwd: string; sessionFile?: string | null; poolKey: string },
+    post: (message: Record<string, unknown>) => void,
+  ): Promise<void>
+  cancelBrowserToolRequest(callId: string): void
+}
+
 export type WorkerAppEventForward = {
   event: AppEvent
   fromCwd: string
