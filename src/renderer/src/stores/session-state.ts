@@ -59,6 +59,11 @@ export const SESSION_FIELDS: readonly SessionField[] = [
  * Fields not listed here are still owned by the top-level store and copied into the viewed entry.
  */
 export const KEYED_SESSION_FIELDS: ReadonlySet<SessionField> = new Set<SessionField>([
+  // Timeline: each session keeps its own rows; a switch shows the target's rows, never copies.
+  'timelineItems',
+  'streamingAssistantId',
+  'historyTotalCount',
+  'historyLoadedCount',
   // Run state: a switch shows the target session's own run, never the previous one's.
   'runState',
   'workerLiveSnapshot',

@@ -135,6 +135,7 @@ describe('workspace/session navigation', () => {
       currentSessionId: 'p1',
       historySessionFile: sessionFile,
       ephemeralSandboxDraft: false,
+      timelineItems: tempItems.map((item) => ({ ...item })),
       streamingAssistantId: 't2',
       runState: { status: 'running', activeRunId: 'run-1', toolCount: 0, errorCount: 0 },
       workerLiveSnapshot: { sessionId: 'p1', sessionFile, status: 'running' },
