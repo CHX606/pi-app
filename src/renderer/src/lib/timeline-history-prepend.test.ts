@@ -57,7 +57,12 @@ describe('older history belongs to its requested session', () => {
   })
 
   it('prepends the page when the same normalized session is still visible', async () => {
-    useUIStore.setState({ historySessionFile: 'C:\\sessions\\a.jsonl' })
+    // Timelines are per session: seed the visible session itself, not the beforeEach one.
+    useUIStore.setState({
+      historySessionFile: 'C:\\sessions\\a.jsonl',
+      historyLoadedCount: 1, historyTotalCount: 3,
+      timelineItems: [{ id: 'a', type: 'user-message', text: 'Session A', timestamp: 2 }],
+    })
     await prependOlderTimelinePage('c:/sessions/a.jsonl', 1)
     expect(useUIStore.getState().timelineItems.map((item) => item.text)).toEqual(['Earlier message in A', 'Session A'])
     expect(useUIStore.getState().historyLoadedCount).toBe(2)

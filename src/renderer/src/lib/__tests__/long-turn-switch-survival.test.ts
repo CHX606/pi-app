@@ -10,7 +10,6 @@ vi.mock('@renderer/lib/ipc-client', () => ({ ipcClient: { invoke: vi.fn().mockRe
 vi.mock('@renderer/lib/session-display-meta', () => ({ applyComposerDisplayMeta: vi.fn() }))
 
 import { captureVisibleLiveSessionTimeline } from '../capture-live-session-timeline'
-import { clearLiveSessionTimeline } from '../live-session-timeline-cache'
 import { clearSessionDiskAuthoritative } from '../session-disk-authority'
 import { clearSessionShellForTests, focusSessionSync, hydrateSessionView } from '../session-shell'
 import { clearStreamPending } from '@renderer/stores/ui-store-stream'
@@ -25,7 +24,6 @@ beforeEach(() => {
   sessionFile = join(directory, 'session.jsonl')
   writeFileSync(sessionFile, JSON.stringify({ type: 'session', version: 3, id: 'a', cwd: directory }) + '\n')
   clearSessionShellForTests()
-  clearLiveSessionTimeline()
   clearSessionDiskAuthoritative()
   clearStreamPending()
 })

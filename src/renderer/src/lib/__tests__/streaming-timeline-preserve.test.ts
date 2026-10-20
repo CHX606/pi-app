@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { saveLiveSessionTimeline, getLiveSessionTimeline } from '../live-session-timeline-cache'
 import {
   applyLiveStreamingTextToMergedTimeline,
   mergeLiveCacheTimelineSnapshots,
@@ -56,36 +55,6 @@ describe('streaming-timeline-preserve', () => {
     })
     expect(merged.filter((i) => i.type === 'user-message')).toHaveLength(2)
     expect(merged.at(-1)?.text).toBe('partial and much longer streamed body')
-  })
-
-  it('saveLiveSessionTimeline keeps longer assistant text from existing cache', () => {
-    saveLiveSessionTimeline({
-      sessionId: 's1',
-      sessionFile: '/tmp/p.jsonl',
-      timelineItems: [
-        { id: 'a1', type: 'assistant-message', text: 'hello world streaming', timestamp: 1 },
-      ],
-      streamingAssistantId: 'a1',
-      runState: { status: 'running', toolCount: 0, errorCount: 0 },
-      pendingSteering: [],
-      pendingFollowUp: [],
-      optimisticPendingUserText: null,
-      agentTurnBootstrapping: false,
-    })
-
-    saveLiveSessionTimeline({
-      sessionId: 's1',
-      sessionFile: '/tmp/p.jsonl',
-      timelineItems: [{ id: 'a1', type: 'assistant-message', text: 'ello', timestamp: 1 }],
-      streamingAssistantId: 'a1',
-      runState: { status: 'running', toolCount: 0, errorCount: 0 },
-      pendingSteering: [],
-      pendingFollowUp: [],
-      optimisticPendingUserText: null,
-      agentTurnBootstrapping: false,
-    })
-
-    expect(getLiveSessionTimeline('/tmp/p.jsonl')?.timelineItems[0]?.text).toBe('hello world streaming')
   })
 
   it('applyLiveStreamingTextToMergedTimeline enriches disk-empty assistant from live cache', () => {

@@ -1,5 +1,6 @@
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { useUIStore } from '@renderer/stores/ui-store'
+import { selectViewSession } from '@renderer/stores/session-state'
 import { materializePendingNewSession } from '@renderer/lib/new-session'
 import { beginSessionNavigation, getSessionNavigationToken, isSessionNavigationCurrent } from '@renderer/lib/session-navigation'
 
@@ -28,6 +29,8 @@ export async function finalizeEphemeralSandboxOnFirstSend(
       current.currentWorkspace === store.currentWorkspace &&
       current.currentSessionId === store.currentSessionId &&
       current.historySessionFile === store.historySessionFile) {
+    // The sandbox draft (with its optimistic first turn) follows the view into the new workspace.
+    const draftState = selectViewSession(useUIStore.getState())
     store.clearEphemeralSandboxDraft()
     const navigationToken = beginSessionNavigation()
     // 不阻塞等 Worker init；乐观 UI 已展示，prompt.send 前 materialize 会 session.new
@@ -35,6 +38,7 @@ export async function finalizeEphemeralSandboxOnFirstSend(
       void ipcClient.invoke('workspace.open', { path: box.path }).catch((e) => console.error(e))
     }
     store.setWorkspace(box.path)
+    store.adoptViewSessionState(draftState)
     origin = { state: useUIStore.getState(), navigationToken }
   }
 

@@ -3,22 +3,44 @@ import { ipcClient } from '@renderer/lib/ipc-client'
 import { reportVisibleSession } from '@renderer/lib/visible-session-report'
 import { beginSessionNavigation } from '@renderer/lib/session-navigation'
 import { clearSessionFocus } from '@renderer/lib/session-shell'
+import { EPHEMERAL_DRAFT_SESSION_ID, PENDING_NEW_SESSION_ID } from '@renderer/lib/session-ids'
 import { useExtensionUIStore } from '@renderer/stores/extension-ui-store'
 import { useUIStore } from '@renderer/stores/ui-store'
+import { flushStreamPendingSync } from '@renderer/stores/ui-store-stream'
+import type { RunState, UIState } from '@renderer/stores/ui-store-types'
 
 export type BlankSessionKind = 'pending-project' | 'ephemeral-sandbox'
 
-function clearBlankSessionProjection(): void {
-  captureVisibleLiveSessionTimeline()
-  clearSessionFocus()
+/**
+ * Run state a blank composer starts with: idle, nothing from the previous session's turn or usage,
+ * but the user's current model and thinking choice so a new chat continues with them.
+ */
+function blankRunState(state: UIState): RunState {
+  const prev = state.runState
+  const model = state.lastModel ?? prev.model
+  const thinkingLevel = state.lastThinking ?? prev.thinkingLevel
+  return {
+    status: 'idle',
+    toolCount: 0,
+    errorCount: 0,
+    ...(model ? { model } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(model && model === prev.model && prev.availableThinkingLevels
+      ? { availableThinkingLevels: prev.availableThinkingLevels }
+      : {}),
+  }
+}
 
-  const state = useUIStore.getState()
-  state.clearTimeline()
-  useUIStore.setState({
+/** Display state of an empty conversation; written together with the view pointer it belongs to. */
+function blankSessionPatch(state: UIState): Partial<UIState> {
+  return {
+    timelineItems: [],
+    streamingAssistantId: null,
     pendingSteering: [],
     pendingFollowUp: [],
     optimisticPendingUserText: null,
     agentTurnBootstrapping: false,
+    pendingTurnStage: null,
     fileChanges: [],
     historyTotalCount: 0,
     historyLoadedCount: 0,
@@ -27,32 +49,33 @@ function clearBlankSessionProjection(): void {
     composerWidget: null,
     subagentSessionGroup: null,
     workerLiveSnapshot: { sessionId: null, sessionFile: null, status: 'idle' },
-    runState: {
-      ...state.runState,
-      status: 'idle',
-      activeRunId: undefined,
-      activeTool: undefined,
-      activeToolStatus: undefined,
-      toolCount: 0,
-      errorCount: 0,
-    },
-  })
+    runState: blankRunState(state),
+  }
+}
+
+function leaveVisibleSession(): void {
+  captureVisibleLiveSessionTimeline()
+  clearSessionFocus()
+  flushStreamPendingSync(useUIStore.getState, useUIStore.setState)
   useExtensionUIStore.getState().resetForSessionContext()
 }
 
+/** Clear the visible conversation to an empty one (the session itself keeps its state). */
 export function resetBlankSessionProjection(): void {
-  clearBlankSessionProjection()
+  leaveVisibleSession()
+  useUIStore.setState((state) => blankSessionPatch(state))
 }
 
 export function enterBlankSession(kind: BlankSessionKind): void {
   beginSessionNavigation()
-  clearBlankSessionProjection()
-  useUIStore.setState({
+  leaveVisibleSession()
+  useUIStore.setState((state) => ({
+    ...blankSessionPatch(state),
     ephemeralSandboxDraft: kind === 'ephemeral-sandbox',
     pendingNewSessionPlaceholder: kind === 'pending-project',
     ...(kind === 'ephemeral-sandbox' ? { currentWorkspace: null } : {}),
-    currentSessionId: kind === 'ephemeral-sandbox' ? '__ephemeral_draft__' : '__pending_new__',
-  })
+    currentSessionId: kind === 'ephemeral-sandbox' ? EPHEMERAL_DRAFT_SESSION_ID : PENDING_NEW_SESSION_ID,
+  }))
 
   reportVisibleSession(null)
   if (kind === 'ephemeral-sandbox') {

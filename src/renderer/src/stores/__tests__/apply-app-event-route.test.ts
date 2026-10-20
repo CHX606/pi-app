@@ -136,7 +136,21 @@ describe('resolveAppEventRoute', () => {
     ).toBe('background')
   })
 
-  it('backgrounds unscoped events when view and worker session files differ', () => {
+  it('drops unscoped events while the viewed session is the worker-bound one', () => {
+    expect(
+      resolveAppEventRoute(
+        {
+          currentWorkspace: '/w/preview',
+          currentSessionId: 'view-a',
+          historySessionFile: '/tmp/a.jsonl',
+          workerLiveSnapshot: { sessionId: 'w-a', sessionFile: '/tmp/a.jsonl' },
+        },
+        { type: 'run', phase: 'running', seq: 1, workspaceId: '/w/preview', timestamp: 1 } as never,
+      ),
+    ).toBe('drop')
+  })
+
+  it('drops unscoped events when view and worker session files differ', () => {
     expect(
       resolveAppEventRoute(
         {
@@ -153,6 +167,6 @@ describe('resolveAppEventRoute', () => {
           timestamp: 1,
         } as never,
       ),
-    ).toBe('background')
+    ).toBe('drop')
   })
 })

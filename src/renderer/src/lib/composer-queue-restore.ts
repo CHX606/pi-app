@@ -1,7 +1,7 @@
 import { toast } from 'sonner'
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { markAbortQueueIgnore, markAbortUiHold } from '@renderer/lib/abort-ui-hold'
-import { markLiveSessionTurnEnded } from '@renderer/lib/live-session-timeline-cache'
+import { markSessionTurnEnded } from '@renderer/stores/session-scope'
 import { markStreamingAssistantIncomplete } from '@renderer/lib/mark-streaming-incomplete'
 import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { useUIStore } from '@renderer/stores/ui-store'
@@ -13,7 +13,7 @@ export function applyComposerAbortUi(sessionFile: string): void {
   markAbortUiHold(sessionFile)
   markAbortQueueIgnore(sessionFile)
   store.setSessionRuntimeRunning(sessionFile, false)
-  markLiveSessionTurnEnded(sessionFile, 'idle')
+  markSessionTurnEnded(sessionFile, 'idle')
   if (!sessionFilesEqual(store.historySessionFile, sessionFile)) return
 
   // Always clear focus-session turn UI on explicit abort click.

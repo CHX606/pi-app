@@ -1,11 +1,17 @@
 import type { CompactionEvent, StoreApi } from '@renderer/stores/apply-app-event-types'
 
-export function handleCompaction(event: CompactionEvent, api: StoreApi): void {
+export function handleCompaction(
+  event: CompactionEvent,
+  api: StoreApi,
+  opts: { clearDialogs?: boolean } = {},
+): void {
   const state = api.get()
   // 压缩状态按会话键控：A 压缩中切到 B，B 不得错显；A 的 end 转后台也要能清掉
   const sessionFile = event.sessionFile ?? null
   if (event.phase === 'start') {
     state.setCompactingSession(sessionFile, true)
+    // Extension dialogs belong to the visible session; a background compaction leaves them alone.
+    if (opts.clearDialogs === false) return
     void Promise.all([
       import('@renderer/lib/extension-ui-channel'),
       import('@renderer/stores/extension-ui-store'),

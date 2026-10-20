@@ -1,6 +1,5 @@
 import { memo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getLiveSessionTimeline } from '@renderer/lib/live-session-timeline-cache'
 import { getSessionView } from '@renderer/lib/session-shell'
 import { fetchSessionHistoryTail } from '@renderer/lib/session-history'
 import { cn } from '@renderer/lib/utils'
@@ -78,9 +77,9 @@ export function paneDigest(items: readonly TimelineItem[] | null): PaneDigest {
   return d
 }
 
-/** In-memory sources: a running background session streams into the live cache. */
+/** In-memory rows of the session: background runs keep streaming into its own state. */
 function readLive(sessionFile: string): TimelineItem[] | null {
-  const live = getLiveSessionTimeline(sessionFile)?.timelineItems
+  const live = getSessionView(sessionFile)?.items
   return live?.length ? live : null
 }
 
@@ -106,12 +105,12 @@ function hasSettledReply(items: readonly TimelineItem[]): boolean {
 }
 
 /**
- * The latest part of a session for an inactive pane, read from the live cache (background runs
- * keep streaming into it), the session view cache, or the disk tail. Polled only while the window
+ * The latest part of a session for an inactive pane, read from its in-memory rows (background runs
+ * keep streaming into them) or the disk tail. Polled only while the window
  * is visible; the full timeline mounts when the pane is activated.
  */
 export function usePaneTimeline(sessionFile: string | null): TimelineItem[] | null {
-  const [items, setItems] = useState<TimelineItem[] | null>(() => (sessionFile ? readLive(sessionFile) ?? getSessionView(sessionFile)?.items ?? null : null))
+  const [items, setItems] = useState<TimelineItem[] | null>(() => (sessionFile ? readLive(sessionFile) : null))
   useEffect(() => {
     if (!sessionFile) {
       setItems(null)
@@ -144,8 +143,7 @@ export function usePaneTimeline(sessionFile: string | null): TimelineItem[] | nu
       // Keep the disk tail fresh: a first read can land before the reply is saved.
       if (Date.now() - lastDiskAt > 4000) void loadDisk().then(tick)
       const live = readLive(sessionFile)
-      const view = getSessionView(sessionFile)?.items
-      show(pickPreviewSource(live, disk, view ?? null))
+      show(pickPreviewSource(live, disk, null))
     }
     void loadDisk().then(tick)
     tick()

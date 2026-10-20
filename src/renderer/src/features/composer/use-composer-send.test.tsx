@@ -123,7 +123,7 @@ describe('useComposerSend submission arbitration', () => {
     mocks.routeSlash.mockResolvedValue({ handled: false })
     mocks.clearOptimistic.mockReturnValue(true)
     mocks.afterPromptSent.mockReset().mockResolvedValue()
-    for (const key of ['pending:D:/workspace', 'file:C:/sessions/current.jsonl', 'file:C:/sessions/new.jsonl']) {
+    for (const key of ['draft:pending:d:/workspace', 'C:/sessions/current.jsonl', 'C:/sessions/new.jsonl']) {
       clearTransientComposerDraft(key)
     }
     useUIStore.setState({
@@ -375,7 +375,7 @@ describe('useComposerSend submission arbitration', () => {
     expect(serializeRichInput(editor).payload).toBe(original.payload)
     expect(serializeRichInput(editor).attachments).toEqual(original.attachments)
     expect(updateFromEditor).toHaveBeenCalledTimes(2)
-    expect(readTransientComposerDraft('pending:D:/workspace')).not.toBeNull()
+    expect(readTransientComposerDraft('draft:pending:d:/workspace')).not.toBeNull()
     expect(mocks.invoke).not.toHaveBeenCalledWith('prompt.send', expect.anything())
   })
 
@@ -405,7 +405,7 @@ describe('useComposerSend submission arbitration', () => {
     await act(() => result.current.sendCurrent())
 
     expect(serializeRichInput(editor).displayText).toBe('other session draft')
-    expect(readTransientComposerDraft('file:C:/sessions/current.jsonl')).toEqual([
+    expect(readTransientComposerDraft('C:/sessions/current.jsonl')).toEqual([
       { type: 'text', text: 'original prompt' },
     ])
   })
@@ -429,7 +429,7 @@ describe('useComposerSend submission arbitration', () => {
 
     await act(() => result.current.sendCurrent())
 
-    expect(readTransientComposerDraft('file:C:/sessions/new.jsonl')).toEqual([
+    expect(readTransientComposerDraft('C:/sessions/new.jsonl')).toEqual([
       { type: 'text', text: 'first prompt' },
     ])
     expect(serializeRichInput(editor).displayText).toBe('first prompt')

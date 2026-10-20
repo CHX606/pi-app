@@ -22,10 +22,7 @@ import {
   clearOptimisticOutgoing,
 } from '@renderer/lib/optimistic-send'
 import { captureVisibleLiveSessionTimeline } from '@renderer/lib/capture-live-session-timeline'
-import {
-  clearLiveSessionTimeline,
-  saveLiveSessionTimeline,
-} from '@renderer/lib/live-session-timeline-cache'
+import { seedSessionForTest } from '@renderer/test/session-state-helpers'
 import {
   captureFocusFromUiStore,
   clearSessionShellForTests,
@@ -146,7 +143,6 @@ describe('just-sent user message survives session switch during streaming', () =
       sessionMeta: undefined,
     })
     clearStreamPending()
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     useUIStore.setState({
       currentWorkspace: '/workspace',
@@ -231,7 +227,7 @@ describe('just-sent user message survives session switch during streaming', () =
   it('should_keep_just_sent_optimistic_row_when_hydrate_finishes_late', async () => {
     captureFocusFromUiStore()
     focusSessionSync('session-a', sessionA)
-    saveLiveSessionTimeline({
+    seedSessionForTest({
       sessionId: 'session-a',
       sessionFile: sessionA,
       timelineItems: priorHistory.map((item) => ({ ...item })),

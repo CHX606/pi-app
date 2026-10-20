@@ -6,6 +6,7 @@ import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { formatThinkingChip, normalizeThinkingLevel } from '@renderer/lib/format-run-display'
 import { boundThinkingLevelFor, setModelThinkingBinding } from '@renderer/lib/model-thinking-bindings'
 import { useUIStore } from '@renderer/stores/ui-store'
+import { getSessionState } from '@renderer/stores/use-view-session'
 
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
@@ -20,10 +21,13 @@ export function nextThinkingLevel(current: string | undefined, available: readon
 /** Apply a thinking level to the current session (optimistic, rolled back on failure). */
 export async function applyThinkingLevel(level: string): Promise<void> {
   const store = useUIStore.getState()
+  // The session the user changed — every write below targets it, even after a switch.
+  const sessionKey = store.viewSessionKey
+  if (!sessionKey) return
   const previous = store.runState.thinkingLevel
   const model = store.runState.model || ''
   const sessionFile = store.historySessionFile
-  store.setRunState({ thinkingLevel: level })
+  store.setSessionRunState(sessionKey, { thinkingLevel: level })
   const bound = boundThinkingLevelFor(model)
   if (bound && model && bound !== level) void setModelThinkingBinding(model, level).catch(() => {})
   // Draft selections are applied to their own worker when the session is created.
@@ -36,10 +40,12 @@ export async function applyThinkingLevel(level: string): Promise<void> {
     commitSessionDisplayMeta(sessionFile, { thinkingLevel: level })
     toast.success(i18n.t('composer:thinkingPicker.switched', { level: formatThinkingChip(level) }))
   } catch (e) {
-    const current = useUIStore.getState()
-    if (!sessionFilesEqual(current.historySessionFile, sessionFile) || current.runState.thinkingLevel !== level) return
+    // Roll back only if nothing newer set this session's level meanwhile.
+    if (getSessionState(sessionKey)?.runState.thinkingLevel !== level) return
     console.error('thinkingLevel.set failed:', e)
-    current.setRunState({ thinkingLevel: previous })
-    toast.error(i18n.t('composer:switchThinkingFailed'))
+    useUIStore.getState().setSessionRunState(sessionKey, { thinkingLevel: previous })
+    if (sessionFilesEqual(useUIStore.getState().historySessionFile, sessionFile)) {
+      toast.error(i18n.t('composer:switchThinkingFailed'))
+    }
   }
 }

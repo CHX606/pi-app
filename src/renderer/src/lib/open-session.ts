@@ -80,11 +80,12 @@ export async function openSessionIntoWorker(
 
   if (!sessionFile) {
     captureVisibleLiveSessionTimeline()
+    // Re-point the view first so the resets below apply to this file-less session.
+    store.setHistoryMeta(0, 0, null)
     store.setCurrentSession(sessionId)
     store.clearTimeline()
     store.clearFileChanges()
     useExtensionUIStore.getState().resetForSessionContext()
-    store.setHistoryMeta(0, 0, null)
     store.loadHistoryItems([])
     store.setHistoryLoading(false)
     store.setRunState({
