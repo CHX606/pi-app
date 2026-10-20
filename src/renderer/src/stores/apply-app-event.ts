@@ -1,5 +1,5 @@
 import type { AppEvent } from '@shared/app-events'
-import { isSessionScopedAppEvent } from '@shared/app-event-session'
+import { isSessionScopedAppEvent, type SessionScopedAppEvent } from '@shared/app-event-session'
 import { resolveAppEventRoute } from '@renderer/stores/apply-app-event-route'
 import { useUIStore } from '@renderer/stores/ui-store'
 import {
@@ -10,7 +10,9 @@ import {
   handleSlash,
   handleTool,
 } from '@renderer/stores/apply-app-event-handlers'
-import { applyBackgroundAppEvent, eventSessionFile } from '@renderer/stores/apply-app-event-background'
+import { applyBackgroundAppEvent } from '@renderer/stores/apply-app-event-background'
+import { sessionStoreApi } from '@renderer/stores/session-scope'
+import { sessionKeyOf } from '@renderer/stores/session-state'
 import { applyExtensionWidgetEvent, getSessionComposerWidget } from '@renderer/lib/extension-widget-cache'
 import { markLiveSessionTurnEnded } from '@renderer/lib/live-session-timeline-cache'
 import { isAbortQueueIgnoreActive, shouldIgnoreAppEventAfterAbort } from '@renderer/lib/abort-ui-hold'
@@ -31,11 +33,27 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
   }
   const route = resolveAppEventRoute(state, event)
   if (route === 'drop') return
+  // The route guarantees a session file; it is the only session identity an event has.
+  const sessionFile = event.sessionFile as string
   if (route === 'background') {
     applyBackgroundAppEvent(event)
+    applySessionEvent(event, sessionStoreApi(sessionKeyOf(sessionFile), api.nextItemId), sessionFile, false)
     return
   }
+  applySessionEvent(event, api, sessionFile, true)
+}
 
+/**
+ * Reduce one session's event into that session's state. `api` is the view store for the visible
+ * session or the session's own scope for a background one — the handlers are the same.
+ */
+function applySessionEvent(
+  event: SessionScopedAppEvent,
+  api: StoreApi,
+  sessionFile: string,
+  visible: boolean,
+): void {
+  const state = api.get()
   switch (event.type) {
     case 'message':
       handleMessage(event, api)
@@ -54,28 +72,27 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
       break
     case 'run': {
       const accepted = handleRun(event, api)
-      const sessionKey = eventSessionFile(event)
-      if (accepted && sessionKey && (event.phase === 'running' || event.phase === 'started')) {
-        useUIStore.getState().setSessionRuntimeRunning(sessionKey, true)
-      } else if (sessionKey && event.phase === 'idle') {
+      if (accepted && (event.phase === 'running' || event.phase === 'started')) {
+        useUIStore.getState().setSessionRuntimeRunning(sessionFile, true)
+      } else if (event.phase === 'idle') {
         if (api.get().runState.status === 'idle') {
-          useUIStore.getState().setSessionRuntimeRunning(sessionKey, false)
-          markLiveSessionTurnEnded(sessionKey, 'idle')
+          useUIStore.getState().setSessionRuntimeRunning(sessionFile, false)
+          markLiveSessionTurnEnded(sessionFile, 'idle')
         }
-      } else if (sessionKey && (event.phase === 'failed' || event.phase === 'cancelled')) {
-        useUIStore.getState().setSessionRuntimeRunning(sessionKey, false)
-        markLiveSessionTurnEnded(sessionKey, event.phase === 'failed' ? 'failed' : 'idle')
+      } else if (event.phase === 'failed' || event.phase === 'cancelled') {
+        useUIStore.getState().setSessionRuntimeRunning(sessionFile, false)
+        markLiveSessionTurnEnded(sessionFile, event.phase === 'failed' ? 'failed' : 'idle')
       }
       break
     }
     case 'compaction':
-      handleCompaction(event, api)
+      handleCompaction(event, api, { clearDialogs: visible })
       break
     case 'slash':
       handleSlash(event, api)
       break
     case 'queue':
-      if (isAbortQueueIgnoreActive(eventSessionFile(event))) {
+      if (isAbortQueueIgnoreActive(sessionFile)) {
         const hasQueued = (event.steering?.length ?? 0) > 0 || (event.followUp?.length ?? 0) > 0
         if (hasQueued) break
       }
@@ -83,23 +100,16 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
       break
     case 'agent_error': {
       handleAgentError(event, api)
-      const sessionKey = eventSessionFile(event)
-      if (sessionKey) {
-        markLiveSessionTurnEnded(sessionKey, event.kind === 'aborted' ? 'idle' : 'failed')
-      }
+      markLiveSessionTurnEnded(sessionFile, event.kind === 'aborted' ? 'idle' : 'failed')
       break
     }
     case 'completion': {
-      if (event.settled === true) {
-        const sessionKey = eventSessionFile(event)
-        if (sessionKey) useUIStore.getState().markSessionSettled(sessionKey)
-      }
+      if (event.settled === true) useUIStore.getState().markSessionSettled(sessionFile)
       break
     }
     case 'extension_widget': {
       applyExtensionWidgetEvent(event)
-      const viewFile = api.get().historySessionFile
-      if (viewFile) api.get().setComposerWidget(getSessionComposerWidget(viewFile))
+      api.get().setComposerWidget(getSessionComposerWidget(sessionFile))
       break
     }
   }

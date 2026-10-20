@@ -108,4 +108,77 @@ describe('session cross-talk', () => {
       expect(s.sessionRuntimeRunning[B]).toBe(true)
     })
   })
+
+  describe('step 3 — run state per session', () => {
+    function viewA(): void {
+      focusSessionSync('sid-a', A)
+    }
+    function startTurn(file: string, runId: string): void {
+      useUIStore.getState().processEvent(ev({ type: 'run', phase: 'started', runId }, file))
+      useUIStore.getState().processEvent(ev({ type: 'run', phase: 'running', runId }, file))
+    }
+
+    it('shows the target session idle after switching away from a running one (0.7.6)', () => {
+      viewA()
+      startTurn(A, 'r-a')
+      viewB()
+      const s = useUIStore.getState()
+      expect(s.runState.status).toBe('idle')
+      expect(s.runState.activeRunId).toBeUndefined()
+      expect(s.workerLiveSnapshot.sessionFile).toBe(B)
+      expect(s.workerLiveSnapshot.status).toBe('idle')
+    })
+
+    it('keeps the running session running with its run id across a switch and back (0.5.7 stop button)', () => {
+      viewA()
+      startTurn(A, 'r-a')
+      viewB()
+      viewA()
+      const s = useUIStore.getState()
+      expect(s.runState.status).toBe('running')
+      expect(s.runState.activeRunId).toBe('r-a')
+    })
+
+    it('reduces a background tool into its own session only', () => {
+      viewA()
+      startTurn(A, 'r-a')
+      viewB()
+      useUIStore.getState().processEvent(
+        ev({ type: 'tool', phase: 'start', toolName: 'bash', toolCallId: 't1', runId: 'r-a', input: {} }, A),
+      )
+      expect(useUIStore.getState().runState.activeTool).toBeUndefined()
+      expect(useUIStore.getState().sessionStates[A].runState.activeTool).toBe('bash')
+    })
+
+    it('settles a session that finished in the background (no stale running on switch-back)', () => {
+      viewA()
+      startTurn(A, 'r-a')
+      viewB()
+      useUIStore.getState().processEvent(ev({ type: 'run', phase: 'idle', runId: 'r-a' }, A))
+      expect(useUIStore.getState().sessionStates[A].runState.status).toBe('idle')
+      viewA()
+      expect(useUIStore.getState().runState.status).toBe('idle')
+      expect(useUIStore.getState().runState.activeRunId).toBeUndefined()
+    })
+
+    it("does not carry the leaving session's local turn markers into the target (0.5.1)", () => {
+      viewA()
+      useUIStore.setState({ optimisticPendingUserText: 'hello A', agentTurnBootstrapping: true })
+      useUIStore.getState().setSessionRuntimeRunning(A, true)
+      viewB()
+      expect(useUIStore.getState().optimisticPendingUserText).toBeNull()
+      expect(useUIStore.getState().agentTurnBootstrapping).toBe(false)
+      viewA()
+      expect(useUIStore.getState().optimisticPendingUserText).toBe('hello A')
+    })
+
+    it("does not show the previous session's usage in a new chat", async () => {
+      viewA()
+      useUIStore.getState().setRunState({ usage: { input: 9, output: 9, cacheRead: 0, cacheWrite: 0, cost: 1 } })
+      const { enterBlankSession } = await import('@renderer/lib/blank-session-transition')
+      enterBlankSession('pending-project')
+      expect(useUIStore.getState().runState.usage).toBeUndefined()
+      expect(useUIStore.getState().sessionStates[A].runState.usage?.input).toBe(9)
+    })
+  })
 })

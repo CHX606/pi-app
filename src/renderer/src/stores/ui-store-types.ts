@@ -273,5 +273,12 @@ export interface UIState {
   sessionStates: Record<string, SessionState>
   /** Key of the session the view shows; the top-level session fields mirror its entry. */
   viewSessionKey: string | null
+  /**
+   * The viewed draft (new chat / sandbox) became a real session: move its state to that session's
+   * key and point the view at it, in one write.
+   */
+  promoteViewSession: (target: { sessionId: string; sessionFile: string }) => void
+  /** Install a previously captured session state as the viewed session's state. */
+  adoptViewSessionState: (state: SessionState) => void
   processEvent: (event: AppEvent) => void
 }

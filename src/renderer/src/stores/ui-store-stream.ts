@@ -4,6 +4,23 @@ export { mergeStreamChunk } from '@shared/stream-merge'
 
 type StreamFlushKind = 'text' | 'thinking'
 
+type StreamStore = {
+  streamingAssistantId: string | null
+  timelineItems: TimelineItem[]
+}
+
+type StreamScope = {
+  get: () => StreamStore
+  set: (fn: (s: StreamStore) => Partial<StreamStore> | StreamStore) => void
+}
+
+/**
+ * Token deltas are batched per streaming row and flushed once a frame. Each row remembers the
+ * store scope (the view store or one background session) it streams into, so sessions streaming
+ * at the same time never flush into each other. A scope is identified by its `get` function.
+ */
+const streamPending = new Map<string, { text: string; thinking: string; scope: StreamScope }>()
+
 let streamFlushScheduled = false
 let streamFlushFrame: number | null = null
 let streamFlushTimer: ReturnType<typeof setTimeout> | null = null
@@ -16,29 +33,20 @@ function cancelStreamFlush(): void {
   streamFlushScheduled = false
 }
 
-const streamPending = new Map<string, { text: string; thinking: string }>()
-
-type StreamStore = {
-  streamingAssistantId: string | null
-  timelineItems: TimelineItem[]
-}
-
-export function flushStreamPendingSync<S extends StreamStore>(
-  get: () => S,
-  set: (fn: (s: S) => Partial<S> | S) => void,
-): void {
-  cancelStreamFlush()
-  const sid = get().streamingAssistantId
+function flushScope(scope: StreamScope): void {
+  const sid = scope.get().streamingAssistantId
   if (!sid) {
-    streamPending.clear()
+    for (const [id, row] of streamPending) {
+      if (row.scope.get === scope.get) streamPending.delete(id)
+    }
     return
   }
   const pending = streamPending.get(sid)
-  if (!pending || (!pending.text && !pending.thinking)) return
+  if (!pending || pending.scope.get !== scope.get || (!pending.text && !pending.thinking)) return
   const textDelta = pending.text
   const thinkDelta = pending.thinking
   streamPending.delete(sid)
-  set((s) => {
+  scope.set((s) => {
     if (s.streamingAssistantId !== sid) return s
     const index = s.timelineItems.findIndex((row) => row.id === sid)
     if (index < 0) return s
@@ -58,19 +66,32 @@ export function flushStreamPendingSync<S extends StreamStore>(
     // Copy once and patch the streaming row — avoid dual full-array maps per flush.
     const items = s.timelineItems.slice()
     items[index] = { ...current, text: nextText, thinkingText: nextThinking }
-    return { timelineItems: items } as Partial<S>
+    return { timelineItems: items }
   })
 }
 
-function scheduleStreamFlush<S extends StreamStore>(
-  get: () => S,
-  set: (fn: (s: S) => Partial<S> | S) => void,
-): void {
+function flushAllScopes(): void {
+  cancelStreamFlush()
+  const scopes = new Map<StreamScope['get'], StreamScope>()
+  for (const row of streamPending.values()) scopes.set(row.scope.get, row.scope)
+  for (const scope of scopes.values()) flushScope(scope)
+}
+
+function scheduleStreamFlush(): void {
   if (streamFlushScheduled) return
   streamFlushScheduled = true
   // Hidden or occluded windows can suspend animation frames while IPC keeps arriving.
-  streamFlushTimer = setTimeout(() => flushStreamPendingSync(get, set), 100)
-  streamFlushFrame = requestAnimationFrame(() => flushStreamPendingSync(get, set))
+  streamFlushTimer = setTimeout(flushAllScopes, 100)
+  streamFlushFrame = requestAnimationFrame(flushAllScopes)
+}
+
+/** Flush the batched deltas of one store scope now (before reading or replacing its timeline). */
+export function flushStreamPendingSync<S extends StreamStore>(
+  get: () => S,
+  set: (fn: (s: S) => Partial<S> | S) => void,
+): void {
+  flushScope({ get, set } as unknown as StreamScope)
+  if (streamPending.size === 0) cancelStreamFlush()
 }
 
 export function queueStreamDelta<S extends StreamStore>(
@@ -82,13 +103,21 @@ export function queueStreamDelta<S extends StreamStore>(
   const sid = get().streamingAssistantId
   if (!sid || !delta) return
   let row = streamPending.get(sid)
-  if (!row) {
-    row = { text: '', thinking: '' }
+  if (!row || row.scope.get !== get) {
+    row = { text: '', thinking: '', scope: { get, set } as unknown as StreamScope }
     streamPending.set(sid, row)
   }
   if (kind === 'text') row.text += delta
   else row.thinking += delta
-  scheduleStreamFlush(get, set)
+  scheduleStreamFlush()
+}
+
+/** Drop the batched deltas of one store scope only (other sessions keep streaming). */
+export function clearStreamPendingFor(get: () => unknown): void {
+  for (const [id, row] of streamPending) {
+    if (row.scope.get === get) streamPending.delete(id)
+  }
+  if (streamPending.size === 0) cancelStreamFlush()
 }
 
 export function clearStreamPending(): void {

@@ -37,11 +37,10 @@ export async function materializePendingNewSession(
     current.currentSessionId === store.currentSessionId &&
     current.historySessionFile === store.historySessionFile
   if (ownsView) {
-    store.clearPendingNewSessionPlaceholder()
-    store.setCurrentSession(sessionId)
-    // Keep the optimistic first turn only in the view that submitted it.
+    // The draft the first turn was typed in becomes this session (optimistic turn included);
+    // a view that moved on keeps its own state.
+    store.promoteViewSession({ sessionId, sessionFile })
     store.clearFileChanges()
-    store.setHistoryMeta(0, 0, sessionFile)
   }
   insertSessionRowOptimistically(workspaceId, { sessionId, sessionFile, title })
   // The caller still needs the file when creation finishes in the background.

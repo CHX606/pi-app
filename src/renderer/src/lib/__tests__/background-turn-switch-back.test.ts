@@ -25,7 +25,6 @@ import {
   focusSession,
   focusSessionSync,
 } from '@renderer/lib/session-shell'
-import { applyBackgroundAppEvent } from '@renderer/stores/apply-app-event-background'
 import { clearStreamPending } from '@renderer/stores/ui-store-stream'
 import { useUIStore } from '@renderer/stores/ui-store'
 import type { TimelineItem } from '@renderer/stores/ui-store-types'
@@ -97,7 +96,7 @@ describe('#99 background turn completion → switch back', () => {
     focusSessionSync('session-b', sessionB)
 
     // A finishes in the background; only the terminal run event reaches the live cache.
-    applyBackgroundAppEvent({
+    useUIStore.getState().processEvent({
       type: 'run',
       phase: 'idle',
       seq: 10,
@@ -135,7 +134,7 @@ describe('#99 background turn completion → switch back', () => {
     captureVisibleLiveSessionTimeline()
     diskRows('C:/sessions/b.jsonl', [])
     focusSessionSync('session-b', sessionB)
-    applyBackgroundAppEvent({
+    useUIStore.getState().processEvent({
       type: 'run',
       phase: 'idle',
       seq: 10,

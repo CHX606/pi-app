@@ -311,17 +311,10 @@ export function bindViewToUiStore(view: SessionView): void {
           streamCandidateItems,
           view.streamingAssistantId,
         )
-  const optimisticPendingUserText = terminalLive
-    ? null
-    : visibleLocalTurn
-      ? state.optimisticPendingUserText
-      : view.optimisticPendingUserText
-  const agentTurnBootstrapping = terminalLive
-    ? false
-    : visibleLocalTurn
-      ? state.agentTurnBootstrapping
-      : view.agentTurnBootstrapping
 
+  // Run state, worker snapshot and local turn markers are the target session's own
+  // (`sessionStates[key]`, kept current by its events while in the background). Only the run
+  // status is reconciled with the runtime signals above; nothing comes from the previous view.
   useUIStore.setState({
     currentSessionId: view.sessionId,
     historySessionFile: view.sessionKey,
@@ -329,32 +322,24 @@ export function bindViewToUiStore(view: SessionView): void {
     historyLoadedCount: view.historyLoaded,
     timelineItems: cloneItems(displayItems),
     streamingAssistantId,
-    optimisticPendingUserText,
-    agentTurnBootstrapping,
     pendingSteering: [...view.pendingSteering],
     pendingFollowUp: [...view.pendingFollowUp],
-    runState: {
-      ...state.runState,
-      ...(live?.runState ?? {}),
-      status,
-      activeTool:
-        effectiveRunUI === 'running'
-          ? (live?.runState.activeTool ?? state.runState.activeTool)
-          : undefined,
-      activeToolStatus:
-        effectiveRunUI === 'running'
-          ? (live?.runState.activeToolStatus ?? state.runState.activeToolStatus)
-          : undefined,
-      activeRunId:
-        effectiveRunUI === 'running'
-          ? (live?.runState.activeRunId ?? state.runState.activeRunId)
-          : undefined,
-    },
-    workerLiveSnapshot: {
-      sessionId: view.sessionId,
-      sessionFile: view.sessionKey,
-      status: effectiveRunUI === 'running' ? 'running' : effectiveRunUI === 'failed' ? 'failed' : 'idle',
-    },
+  })
+  const target = useUIStore.getState()
+  if (target.runState.status !== status) {
+    target.setRunState(
+      status === 'running'
+        ? { status }
+        : { status, activeTool: undefined, activeToolStatus: undefined, activeRunId: undefined },
+    )
+  }
+  if (terminalLive && (target.optimisticPendingUserText != null || target.agentTurnBootstrapping)) {
+    useUIStore.setState({ optimisticPendingUserText: null, agentTurnBootstrapping: false })
+  }
+  useUIStore.getState().setWorkerLiveSnapshot({
+    sessionId: view.sessionId ?? target.workerLiveSnapshot.sessionId,
+    sessionFile: view.sessionKey,
+    status: effectiveRunUI === 'running' ? 'running' : effectiveRunUI === 'failed' ? 'failed' : 'idle',
   })
 }
 

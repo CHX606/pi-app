@@ -53,7 +53,14 @@ export const SESSION_FIELDS: readonly SessionField[] = [
  * viewed session after every store write, so switching the view never carries a value across.
  * Fields not listed here are still owned by the top-level store and copied into the viewed entry.
  */
-export const KEYED_SESSION_FIELDS: ReadonlySet<SessionField> = new Set<SessionField>([])
+export const KEYED_SESSION_FIELDS: ReadonlySet<SessionField> = new Set<SessionField>([
+  // Run state: a switch shows the target session's own run, never the previous one's.
+  'runState',
+  'workerLiveSnapshot',
+  'optimisticPendingUserText',
+  'agentTurnBootstrapping',
+  'pendingTurnStage',
+])
 
 const IDLE_RUN: RunState = { status: 'idle', toolCount: 0, errorCount: 0 }
 
@@ -78,6 +85,37 @@ export function emptySessionState(key: string): SessionState {
 
 /** Shared empty value for selectors when no session is viewed; never mutate. */
 export const EMPTY_SESSION_STATE: SessionState = Object.freeze(emptySessionState('')) as SessionState
+
+export type SessionDefaults = {
+  lastModel?: string | null
+  lastThinking?: string | null
+  /** The view's run state when the session is created (a new draft continues with its model). */
+  runState?: RunState
+}
+
+/**
+ * First state of a session the renderer has not seen yet: idle, bound to its own file, showing the
+ * user's last chosen model / thinking level until the session's own meta arrives. A blank draft
+ * also falls back to the model the view showed, so a new chat continues with it.
+ */
+export function seedSessionState(key: string, defaults: SessionDefaults): SessionState {
+  const state = emptySessionState(key)
+  const runState: RunState = { ...state.runState }
+  const draft = isDraftSessionKey(key)
+  const model = defaults.lastModel || (draft ? defaults.runState?.model : undefined)
+  const thinkingLevel = defaults.lastThinking || (draft ? defaults.runState?.thinkingLevel : undefined)
+  if (model) runState.model = model
+  if (thinkingLevel) runState.thinkingLevel = thinkingLevel
+  return {
+    ...state,
+    runState,
+    workerLiveSnapshot: {
+      sessionId: null,
+      sessionFile: isDraftSessionKey(key) ? null : key || null,
+      status: 'idle',
+    },
+  }
+}
 
 const DRAFT_PREFIX = 'draft:'
 
@@ -120,6 +158,7 @@ export function viewSessionKeyOf(s: ViewKeyInput): string {
 }
 
 type MirrorState = ViewKeyInput &
+  SessionDefaults &
   Pick<SessionState, SessionField> & {
     sessionStates: Record<string, SessionState>
     viewSessionKey: string | null
@@ -165,7 +204,7 @@ export function reconcileSessionMirror<S extends MirrorState>(
   const current = states[key]
   let entry: SessionState | null = null
   const write = (field: SessionField, value: unknown): void => {
-    const base = entry ?? current ?? emptySessionState(key)
+    const base = entry ?? current ?? seedSessionState(key, prev)
     if (current && base[field] === value) return
     if (!entry) entry = { ...base }
     ;(entry as unknown as Record<string, unknown>)[field] = value
@@ -179,7 +218,7 @@ export function reconcileSessionMirror<S extends MirrorState>(
   }
 
   const out: Partial<S> = { ...patch }
-  const nextEntry: SessionState = entry ?? current ?? emptySessionState(key)
+  const nextEntry: SessionState = entry ?? current ?? seedSessionState(key, prev)
   if (entry || !current) {
     out.sessionStates = { ...states, [key]: nextEntry } as S['sessionStates']
   }

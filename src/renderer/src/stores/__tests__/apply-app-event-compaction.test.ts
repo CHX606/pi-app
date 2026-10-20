@@ -8,6 +8,8 @@ vi.mock('@renderer/lib/alert-trace', () => ({
 }))
 vi.mock('@renderer/lib/abort-ui-hold', () => ({
   isAbortUiHoldActive: () => false,
+  isAbortQueueIgnoreActive: () => false,
+  shouldIgnoreAppEventAfterAbort: () => false,
 }))
 vi.mock('@renderer/lib/extension-ui-tool-sync', () => ({
   reconcileAllStaleInteractiveToolRows: vi.fn(),
@@ -24,7 +26,6 @@ vi.mock('@renderer/stores/extension-ui-store', () => ({
 
 import { handleCompaction } from '../apply-app-event-compaction'
 import { handleRun } from '../apply-app-event-run'
-import { applyBackgroundAppEvent } from '../apply-app-event-background'
 import { useUIStore } from '@renderer/stores/ui-store'
 import type { StoreApi } from '../apply-app-event-types'
 import type { CompactionEvent } from '../apply-app-event-types'
@@ -99,12 +100,13 @@ describe('handleCompaction per-session state', () => {
   })
 
   it('background compaction events keep the session flag in sync', () => {
-    const { api } = makeApi()
     // A 在前台开始压缩后用户切到 B：A 的 start/end 都走后台路由
-    applyBackgroundAppEvent(compactionEvent('start', undefined, '/a.jsonl'))
+    useUIStore.setState({ currentWorkspace: null, currentSessionId: 'b', historySessionFile: '/b.jsonl' })
+    useUIStore.getState().processEvent(compactionEvent('start', undefined, '/a.jsonl'))
     expect(useUIStore.getState().compactingSessions['/a.jsonl']).toBe(true)
 
-    applyBackgroundAppEvent(compactionEvent('end', undefined, '/a.jsonl'))
+    useUIStore.getState().processEvent(compactionEvent('end', undefined, '/a.jsonl'))
+    expect(useUIStore.getState().compactingSessions['/b.jsonl']).toBeUndefined()
     expect(useUIStore.getState().compactingSessions['/a.jsonl']).toBe(false)
   })
 

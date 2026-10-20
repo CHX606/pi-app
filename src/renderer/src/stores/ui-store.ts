@@ -1,7 +1,6 @@
-﻿import { create, type StateCreator } from 'zustand'
+import { create, type StateCreator } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { applyAppEvent } from '@renderer/stores/apply-app-event'
-import { sanitizeRunStatePatch } from '@renderer/lib/format-run-display'
 import {
   dedupeAdjacentUserMessages,
   sanitizeHistoryTimeline,
@@ -11,9 +10,9 @@ import { mergeLiveTimelineWithHistoryTail } from '@renderer/lib/merge-live-histo
 import { resolveMergedStreamingAssistantId } from '@renderer/lib/streaming-timeline-preserve'
 import { isViewingWorkerBoundSession } from '@renderer/lib/session-worker-sync'
 import { normalizeSessionFileKey, sessionFilesEqual } from '@renderer/lib/session-file-key'
-import type { FileChange, RunState, TimelineItem, UIState } from '@renderer/stores/ui-store-types'
+import type { FileChange, TimelineItem, UIState } from '@renderer/stores/ui-store-types'
 import {
-  clearStreamPending,
+  clearStreamPendingFor,
   deleteStreamPendingForId,
   flushStreamPendingSync,
   queueStreamDelta,
@@ -22,7 +21,13 @@ import { createShellSlice } from '@renderer/stores/ui-store-shell-slice'
 import { createRuntimeSlice } from '@renderer/stores/ui-store-runtime-slice'
 import { workspacePathKey } from '@shared/workspace-path'
 import { isAbortQueueIgnoreActive } from '@renderer/lib/abort-ui-hold'
-import { reconcileSessionMirror } from '@renderer/stores/session-state'
+import { reconcileSessionMirror, selectViewSession, sessionKeyOf } from '@renderer/stores/session-state'
+import {
+  applyRunStatePatch,
+  insertTimelineItemBefore,
+  patchTimelineItem,
+  pruneEmptyAssistantItems,
+} from '@renderer/stores/session-ops'
 
 export type { TimelineItem, UIState } from '@renderer/stores/ui-store-types'
 
@@ -65,6 +70,38 @@ export const useUIStore = create<UIState>()(
     sessionMirror((set, get) => ({
   sessionStates: {},
   viewSessionKey: null,
+  promoteViewSession: ({ sessionId, sessionFile }) =>
+    set((s) => {
+      const key = sessionKeyOf(sessionFile)
+      if (!key) return s
+      const draft = selectViewSession(s)
+      return {
+        pendingNewSessionPlaceholder: false,
+        currentSessionId: sessionId,
+        historySessionFile: sessionFile,
+        historyTotalCount: 0,
+        historyLoadedCount: 0,
+        rewindTreeNodes: [],
+        rewindWorkerBound: false,
+        rewindLoadingTree: true,
+        sessionStates: {
+          ...s.sessionStates,
+          [key]: {
+            ...draft,
+            key,
+            historyTotalCount: 0,
+            historyLoadedCount: 0,
+            workerLiveSnapshot: { ...draft.workerLiveSnapshot, sessionId, sessionFile: key },
+          },
+        },
+      }
+    }),
+  adoptViewSessionState: (state) =>
+    set((s) => {
+      const key = s.viewSessionKey
+      if (!key) return s
+      return { sessionStates: { ...s.sessionStates, [key]: { ...state, key } } }
+    }),
   currentWorkspace: null,
   workspaceFileToOpen: null,
   recentProjects: [],
@@ -211,30 +248,16 @@ export const useUIStore = create<UIState>()(
   streamingAssistantId: null,
   appendTimeline: (item) => set((s) => ({ timelineItems: [...s.timelineItems, item] })),
   insertTimelineBefore: (beforeId, item) =>
-    set((s) => {
-      const idx = s.timelineItems.findIndex((i) => i.id === beforeId)
-      if (idx < 0) return { timelineItems: [...s.timelineItems, item] }
-      const next = [...s.timelineItems]
-      next.splice(idx, 0, item)
-      return { timelineItems: next }
-    }),
+    set((s) => ({ timelineItems: insertTimelineItemBefore(s.timelineItems, beforeId, item) })),
   updateTimelineItem: (id, patch) => set((s) => ({
-    timelineItems: s.timelineItems.map((i) => (i.id === id ? { ...i, ...patch } : i)),
+    timelineItems: patchTimelineItem(s.timelineItems, id, patch),
   })),
   appendDeltaToStreamingAssistant: (delta) => queueStreamDelta(get, set, 'text', delta),
   appendThinkingDelta: (delta) => queueStreamDelta(get, set, 'thinking', delta),
   pruneEmptyAssistantBubbles: () =>
     set((s) => {
-      const sid = s.streamingAssistantId
-      const items = s.timelineItems.filter((i) => {
-        if (i.type !== 'assistant-message') return true
-        if (i.incomplete) return true
-        const hasText = !!(i.text && i.text.trim())
-        const hasThink = !!(i.thinkingText && i.thinkingText.trim())
-        if (!hasText && !hasThink) return i.id !== sid
-        return true
-      })
-      if (items.length === s.timelineItems.length) return s
+      const items = pruneEmptyAssistantItems(s.timelineItems, s.streamingAssistantId)
+      if (items === s.timelineItems) return s
       return { timelineItems: items }
     }),
   setStreamingAssistantFinalText: (text) => {
@@ -250,7 +273,7 @@ export const useUIStore = create<UIState>()(
     })
   },
   clearTimeline: () => {
-    clearStreamPending()
+    clearStreamPendingFor(get)
     set({ timelineItems: [], streamingAssistantId: null, optimisticPendingUserText: null, agentTurnBootstrapping: false })
   },
 
@@ -259,31 +282,12 @@ export const useUIStore = create<UIState>()(
 
   runState: { status: 'idle', toolCount: 0, errorCount: 0 },
   setRunState: (patch) => set((s) => {
-    const clean = sanitizeRunStatePatch(patch as Record<string, unknown>)
-    const next = { ...s.runState } as RunState & Record<string, unknown>
-    const extra: Partial<UIState> = {}
-    for (const [key, value] of Object.entries(clean)) {
-      if (key === 'model') {
-        if (value == null || value === '') {
-          delete next.model
-        } else {
-          next.model = value as string
-          extra.lastModel = value as string
-        }
-        continue
-      }
-      if (key === 'thinkingLevel') {
-        if (value == null || value === '') {
-          delete next.thinkingLevel
-        } else {
-          next.thinkingLevel = value as string
-          extra.lastThinking = value as string
-        }
-        continue
-      }
-      next[key] = value
+    const { runState, model, thinkingLevel } = applyRunStatePatch(s.runState, patch)
+    return {
+      runState,
+      ...(model !== undefined ? { lastModel: model } : {}),
+      ...(thinkingLevel !== undefined ? { lastThinking: thinkingLevel } : {}),
     }
-    return { runState: next as RunState, ...extra }
   }),
 
   compactingSessions: {},
