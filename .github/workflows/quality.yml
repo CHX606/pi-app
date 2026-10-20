@@ -109,6 +109,19 @@ jobs:
       - run: npm ci
       - run: npm run test:unit
 
+  # Windows/WSL path handling is a frequent regression source; run the unit suite
+  # on a Windows checkout (CRLF, drive letters) as well.
+  unit-test-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+
   e2e-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
