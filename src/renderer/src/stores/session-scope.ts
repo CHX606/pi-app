@@ -17,6 +17,7 @@ import {
 import {
   SESSION_FIELDS,
   seedSessionState,
+  sessionKeyOf,
   type SessionField,
   type SessionState,
 } from '@renderer/stores/session-state'
@@ -44,6 +45,26 @@ function updateSession(key: string, update: EntryUpdate): void {
     if (!changed) return root
     return { sessionStates: { ...root.sessionStates, [key]: { ...entry, ...patch } } }
   })
+}
+
+/** Write fields of one session's state (seeding the entry if needed); the view mirror follows. */
+export function patchSessionState(key: string, patch: Partial<Omit<SessionState, 'key'>>): void {
+  updateSession(key, () => patch)
+}
+
+/**
+ * A session's turn ended outside its event stream (abort click, worker snapshot): retire its own
+ * streaming / optimistic markers so it is no longer treated as running.
+ */
+export function markSessionTurnEnded(sessionFile: string, status: 'idle' | 'failed'): void {
+  const key = sessionKeyOf(sessionFile)
+  if (!key || !useUIStore.getState().sessionStates[key]) return
+  updateSession(key, (e) => ({
+    streamingAssistantId: null,
+    agentTurnBootstrapping: false,
+    optimisticPendingUserText: null,
+    runState: { ...e.runState, status, activeRunId: undefined, activeTool: undefined, activeToolStatus: undefined },
+  }))
 }
 
 function splitPatch(patch: Partial<UIState>): { session: Partial<SessionState>; root: Partial<UIState> | null } {

@@ -1,10 +1,16 @@
 /**
- * Conversation Session Shell — per-session view cache + focus switch.
+ * Conversation Session Shell — focus switch + disk hydrate over the per-session store.
+ *
+ * Each conversation's rows, run state and turn markers live in `sessionStates[key]` (see
+ * doc/dev/per-session-state-design.md). Background events keep that entry current with the same
+ * handlers as the visible session, so a switch only re-points the view; nothing is copied between
+ * sessions or caches. The shell keeps only view bookkeeping (phase, focus time, disk meta).
  *
  * Product rules (locked):
- * - Cache hit: zero full-screen skeleton; bind cached items immediately.
- * - Max 12 views in memory; running sessions are never evicted.
- * - Run UI authority: sessionRuntimeRunning / bound worker snap / local streaming — never bare runState.
+ * - Cache hit: zero full-screen skeleton; the session's own rows paint immediately.
+ * - Max 12 sessions keep rows in memory; running sessions are never evicted.
+ * - Run UI authority: sessionRuntimeRunning / the session's own turn markers — never another
+ *   session's run state.
  *
  * @see docs/dev/conversation-session-shell.md
  */
@@ -19,11 +25,6 @@ import {
 import { sanitizeHistoryTimeline } from '@renderer/lib/timeline-dedupe'
 import { projectTimelineItems } from '@shared/timeline-projection'
 import {
-  clearLiveSessionTimeline,
-  getLiveSessionTimeline,
-  updateLiveSessionTimeline,
-} from '@renderer/lib/live-session-timeline-cache'
-import {
   mergeLiveTimelineWithHistoryTail,
   spliceFreshDiskTail,
 } from '@renderer/lib/merge-live-history-timeline'
@@ -35,16 +36,19 @@ import { applyComposerDisplayMeta } from '@renderer/lib/session-display-meta'
 import { reportVisibleSession } from '@renderer/lib/visible-session-report'
 import { getSessionComposerWidget } from '@renderer/lib/extension-widget-cache'
 import { useUIStore } from '@renderer/stores/ui-store'
+import { patchSessionState } from '@renderer/stores/session-scope'
+import type { SessionState } from '@renderer/stores/session-state'
 import type { RunState, TimelineItem } from '@renderer/stores/ui-store-types'
-import { flushStreamPendingSync } from '@renderer/stores/ui-store-stream'
+import { flushAllStreamPendingSync } from '@renderer/stores/ui-store-stream'
 
-/** Product default: max cached session views (running pinned separately). */
+/** Product default: max sessions holding rows in memory (running pinned separately). */
 export const MAX_SESSION_VIEWS = 12
 
 export type SessionRunUI = 'idle' | 'running' | 'failed'
 
 export type SessionViewPhase = 'empty' | 'cached' | 'hydrating' | 'ready' | 'error'
 
+/** Read model of one session for callers: its keyed state plus the shell's view bookkeeping. */
 export type SessionView = {
   sessionKey: string
   sessionId: string | null
@@ -62,28 +66,47 @@ export type SessionView = {
   sessionMeta?: { model?: string; thinkingLevel?: string }
 }
 
-const views = new Map<string, SessionView>()
+type ViewMeta = {
+  sessionId: string | null
+  phase: SessionViewPhase
+  lastFocusedAt: number
+  sessionMeta?: { model?: string; thinkingLevel?: string }
+}
+
+const meta = new Map<string, ViewMeta>()
 let focusKey: string | null = null
 
 export function sessionKeyFromFile(sessionFile: string | null | undefined): string {
   return normalizeSessionFileKey(sessionFile) || String(sessionFile || '').trim()
 }
 
-function sessionTurnActive(sessionKey: string): boolean {
-  const runtime = useUIStore.getState().sessionRuntimeRunning ?? {}
-  if (
-    runtime[sessionKey] === true ||
-    Object.entries(runtime).some(([key, running]) => running && sessionFilesEqual(key, sessionKey))
-  ) {
-    return true
-  }
-  const live = getLiveSessionTimeline(sessionKey)
+function entryOf(sessionKey: string): SessionState | undefined {
+  return useUIStore.getState().sessionStates[sessionKey]
+}
+
+function runtimeSaysRunning(sessionKey: string, runtime = useUIStore.getState().sessionRuntimeRunning ?? {}): boolean {
+  if (runtime[sessionKey] === true) return true
+  return Object.entries(runtime).some(([key, running]) => running && sessionFilesEqual(key, sessionKey))
+}
+
+/** The session's own turn is in flight (its markers, not the view's). */
+function entryTurnActive(entry: SessionState | undefined): boolean {
   return (
-    live?.runState.status === 'running' ||
-    live?.streamingAssistantId != null ||
-    live?.optimisticPendingUserText != null ||
-    live?.agentTurnBootstrapping === true
+    !!entry &&
+    (entry.runState.status === 'running' ||
+      entry.streamingAssistantId != null ||
+      entry.optimisticPendingUserText != null ||
+      entry.agentTurnBootstrapping)
   )
+}
+
+function sessionTurnActive(sessionKey: string): boolean {
+  return runtimeSaysRunning(sessionKey) || entryTurnActive(entryOf(sessionKey))
+}
+
+function runUIOf(sessionKey: string, entry: SessionState | undefined): SessionRunUI {
+  if (runtimeSaysRunning(sessionKey) || entryTurnActive(entry)) return 'running'
+  return entry?.runState.status === 'failed' ? 'failed' : 'idle'
 }
 
 export function getFocusSessionKey(): string | null {
@@ -97,233 +120,116 @@ export function clearSessionFocus(): void {
 export function getSessionView(sessionFile: string | null | undefined): SessionView | null {
   const key = sessionKeyFromFile(sessionFile)
   if (!key) return null
-  return views.get(key) ?? null
+  const entry = entryOf(key)
+  const m = meta.get(key)
+  if (!entry && !m) return null
+  return {
+    sessionKey: key,
+    sessionId: m?.sessionId ?? entry?.workerLiveSnapshot.sessionId ?? null,
+    items: entry?.timelineItems ?? [],
+    historyTotal: entry?.historyTotalCount ?? 0,
+    historyLoaded: entry?.historyLoadedCount ?? 0,
+    runUI: runUIOf(key, entry),
+    streamingAssistantId: entry?.streamingAssistantId ?? null,
+    optimisticPendingUserText: entry?.optimisticPendingUserText ?? null,
+    agentTurnBootstrapping: entry?.agentTurnBootstrapping ?? false,
+    pendingSteering: entry?.pendingSteering ?? [],
+    pendingFollowUp: entry?.pendingFollowUp ?? [],
+    phase: m?.phase ?? ((entry?.timelineItems.length ?? 0) > 0 ? 'cached' : 'empty'),
+    lastFocusedAt: m?.lastFocusedAt ?? 0,
+    sessionMeta: m?.sessionMeta,
+  }
 }
 
+/** Write into one session's state through the view read model's field names. */
 export function patchSessionView(
   sessionFile: string,
   patch: Partial<Omit<SessionView, 'sessionKey'>>,
 ): void {
   const key = sessionKeyFromFile(sessionFile)
-  const view = views.get(key)
-  if (!view) return
-  views.set(key, { ...view, ...patch, sessionKey: key })
+  if (!key) return
+  const { items, historyTotal, historyLoaded, runUI, phase, lastFocusedAt, sessionId, sessionMeta, ...rest } = patch
+  const state: Partial<SessionState> = { ...rest }
+  if (items) state.timelineItems = items
+  if (historyTotal != null) state.historyTotalCount = historyTotal
+  if (historyLoaded != null) state.historyLoadedCount = historyLoaded
+  if (runUI) {
+    const runState = entryOf(key)?.runState
+    if (runState && runState.status !== runUI) state.runState = { ...runState, status: runUI }
+  }
+  if (Object.keys(state).length > 0) patchSessionState(key, state)
+  if (phase || lastFocusedAt != null || sessionId !== undefined || sessionMeta) {
+    const m = meta.get(key) ?? { sessionId: null, phase: 'empty', lastFocusedAt: Date.now() }
+    meta.set(key, {
+      ...m,
+      ...(phase ? { phase } : {}),
+      ...(lastFocusedAt != null ? { lastFocusedAt } : {}),
+      ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(sessionMeta ? { sessionMeta } : {}),
+    })
+  }
 }
 
 export function listSessionViewKeys(): string[] {
-  return [...views.keys()]
+  const states = useUIStore.getState().sessionStates
+  return Object.keys(states).filter((key) => !key.startsWith('draft:') && states[key].timelineItems.length > 0)
 }
 
-function emptyView(sessionKey: string, sessionId: string | null): SessionView {
-  return {
-    sessionKey,
-    sessionId,
-    items: [],
-    historyTotal: 0,
-    historyLoaded: 0,
-    runUI: 'idle',
-    streamingAssistantId: null,
-    optimisticPendingUserText: null,
-    agentTurnBootstrapping: false,
-    pendingSteering: [],
-    pendingFollowUp: [],
-    phase: 'empty',
-    lastFocusedAt: Date.now(),
-  }
-}
-
-function cloneItems(items: TimelineItem[]): TimelineItem[] {
-  return items.map((item) => ({ ...item }))
-}
-
-function isViewRunning(view: SessionView, runtime: Record<string, boolean>): boolean {
-  if (view.runUI === 'running') return true
-  if (runtime[view.sessionKey] === true) return true
-  for (const [runtimeKey, running] of Object.entries(runtime)) {
-    if (running && sessionFilesEqual(runtimeKey, view.sessionKey)) return true
-  }
-  return false
-}
-
-/** LRU eviction; never drop running sessions. */
+/**
+ * LRU eviction of rows held in memory; never drops a running or focused session. An evicted
+ * session re-hydrates from disk the next time it is opened.
+ */
 export function evictSessionViewsIfNeeded(runtime?: Record<string, boolean>): void {
   const runtimeMap = runtime ?? useUIStore.getState().sessionRuntimeRunning ?? {}
-  if (views.size <= MAX_SESSION_VIEWS) return
+  const keys = listSessionViewKeys()
+  if (keys.length <= MAX_SESSION_VIEWS) return
 
-  const candidates = [...views.values()]
-    .filter((view) => !isViewRunning(view, runtimeMap) && view.sessionKey !== focusKey)
-    .sort((a, b) => a.lastFocusedAt - b.lastFocusedAt)
+  const candidates = keys
+    .filter((key) => key !== focusKey && !runtimeSaysRunning(key, runtimeMap) && !entryTurnActive(entryOf(key)))
+    .sort((a, b) => (meta.get(a)?.lastFocusedAt ?? 0) - (meta.get(b)?.lastFocusedAt ?? 0))
 
-  let overflow = views.size - MAX_SESSION_VIEWS
-  for (const view of candidates) {
+  let overflow = keys.length - MAX_SESSION_VIEWS
+  for (const key of candidates) {
     if (overflow <= 0) break
-    views.delete(view.sessionKey)
+    patchSessionState(key, { timelineItems: [], streamingAssistantId: null, historyTotalCount: 0, historyLoadedCount: 0 })
+    meta.delete(key)
     overflow--
   }
 }
 
-function resolveRunUI(
-  sessionKey: string,
-  input: {
-    runtime: Record<string, boolean>
-    streamingAssistantId: string | null
-    optimisticPendingUserText: string | null
-    agentTurnBootstrapping: boolean
-    workerSessionFile: string | null
-    workerStatus: 'idle' | 'running' | 'failed' | 'unknown'
-  },
-): SessionRunUI {
-  if (input.runtime[sessionKey] === true) return 'running'
-  for (const [runtimeKey, running] of Object.entries(input.runtime)) {
-    if (running && sessionFilesEqual(runtimeKey, sessionKey)) return 'running'
-  }
-  if (
-    sessionFilesEqual(input.workerSessionFile, sessionKey) &&
-    input.workerStatus === 'running'
-  ) {
-    return 'running'
-  }
-  if (
-    input.streamingAssistantId != null ||
-    input.optimisticPendingUserText != null ||
-    input.agentTurnBootstrapping
-  ) {
-    return 'running'
-  }
-  if (sessionFilesEqual(input.workerSessionFile, sessionKey) && input.workerStatus === 'failed') {
-    return 'failed'
-  }
-  return 'idle'
-}
-
 /**
- * Snapshot the currently displayed conversation into the shell cache (call before focus change).
+ * Before the view leaves a session: land its batched stream text and remember focus time. The
+ * session's rows already live in its own entry, so there is nothing to copy.
  */
 export function captureFocusFromUiStore(): void {
   const state = useUIStore.getState()
   const viewFile = state.historySessionFile
   if (!viewFile) return
-
-  flushStreamPendingSync(useUIStore.getState, useUIStore.setState)
-  const latest = useUIStore.getState()
+  flushAllStreamPendingSync()
   const sessionKey = sessionKeyFromFile(viewFile)
   if (!sessionKey) return
-
-  // Idle turns no longer capture live text, but their queue may have changed in the foreground.
-  updateLiveSessionTimeline(sessionKey, (snapshot) => ({
-    ...snapshot,
-    pendingSteering: latest.pendingSteering,
-    pendingFollowUp: latest.pendingFollowUp,
-  }))
-
-  const runUI = resolveRunUI(sessionKey, {
-    runtime: latest.sessionRuntimeRunning ?? {},
-    streamingAssistantId: latest.streamingAssistantId,
-    optimisticPendingUserText: latest.optimisticPendingUserText,
-    agentTurnBootstrapping: latest.agentTurnBootstrapping,
-    workerSessionFile: latest.workerLiveSnapshot.sessionFile,
-    workerStatus: latest.workerLiveSnapshot.status,
-  })
-
-  const prev = views.get(sessionKey)
-  const items =
-    latest.timelineItems.length > 0
-      ? cloneItems(latest.timelineItems)
-      : prev?.items
-        ? cloneItems(prev.items)
-        : []
-
-  const hasPendingQueue = latest.pendingSteering.length > 0 || latest.pendingFollowUp.length > 0
-  if (items.length === 0 && runUI === 'idle' && !prev && !hasPendingQueue) return
-
-  views.set(sessionKey, {
-    sessionKey,
-    sessionId: latest.currentSessionId,
-    items,
-    historyTotal: Math.max(latest.historyTotalCount, prev?.historyTotal ?? 0),
-    historyLoaded: Math.max(latest.historyLoadedCount, prev?.historyLoaded ?? 0),
-    runUI,
-    streamingAssistantId: latest.streamingAssistantId,
-    optimisticPendingUserText: latest.optimisticPendingUserText,
-    agentTurnBootstrapping: latest.agentTurnBootstrapping,
-    pendingSteering: [...latest.pendingSteering],
-    pendingFollowUp: [...latest.pendingFollowUp],
-    phase: items.length > 0 ? 'cached' : (prev?.phase ?? 'empty'),
+  const m = meta.get(sessionKey)
+  meta.set(sessionKey, {
+    sessionId: state.currentSessionId ?? m?.sessionId ?? null,
+    phase: m?.phase ?? (state.timelineItems.length > 0 ? 'cached' : 'empty'),
     lastFocusedAt: Date.now(),
-    sessionMeta: prev?.sessionMeta,
+    sessionMeta: m?.sessionMeta,
   })
-  evictSessionViewsIfNeeded(latest.sessionRuntimeRunning)
+  // Keep the runtime map honest while leaving a still-active turn.
+  if (entryTurnActive(entryOf(sessionKey))) state.setSessionRuntimeRunning(sessionKey, true)
 }
 
 /**
- * Push a SessionView into the global display store (Timeline / Composer / Chrome).
- * Does not set historyLoading — caller decides.
+ * Point the view at a session. Its rows, queue and turn markers come from its own entry; only the
+ * run status is reconciled with the runtime map (a background turn may have started or ended
+ * without a run event reaching this renderer, e.g. after a reload).
  */
 export function bindViewToUiStore(view: SessionView): void {
-  const state = useUIStore.getState()
-  const runtime = state.sessionRuntimeRunning ?? {}
-  const runtimeRunning =
-    runtime[view.sessionKey] === true ||
-    Object.entries(runtime).some(
-      ([runtimeKey, running]) => running === true && sessionFilesEqual(runtimeKey, view.sessionKey),
-    )
-  const live = getLiveSessionTimeline(view.sessionKey)
-  const liveRunning =
-    live?.runState.status === 'running' ||
-    live?.streamingAssistantId != null ||
-    live?.optimisticPendingUserText != null ||
-    live?.agentTurnBootstrapping === true
-  const visibleLocalTurn =
-    sessionFilesEqual(state.historySessionFile, view.sessionKey) &&
-    (state.optimisticPendingUserText != null ||
-      state.agentTurnBootstrapping === true ||
-      (typeof state.streamingAssistantId === 'string' &&
-        state.streamingAssistantId.startsWith('opt-asst-')))
-  const terminalLive = live != null && !liveRunning && !visibleLocalTurn
-
-  // Prefer the strongest running signal: shell view, runtime map, or live cache.
-  const effectiveRunUI: SessionRunUI =
-    view.runUI === 'failed' || live?.runState.status === 'failed'
-      ? 'failed'
-      : (view.runUI === 'running' && !terminalLive) || runtimeRunning || liveRunning
-        ? 'running'
-        : 'idle'
-
-  const status: RunState['status'] =
-    effectiveRunUI === 'running' ? 'running' : effectiveRunUI === 'failed' ? 'failed' : 'idle'
-
-  // Re-assert runtime map when we know the session is still active (switch-back safety).
-  if (effectiveRunUI === 'running') {
-    state.setSessionRuntimeRunning(view.sessionKey, true)
-  }
-
-  const displayItems = visibleLocalTurn ? state.timelineItems : view.items
-  const streamCandidateItems =
-    live && view.streamingAssistantId === live.streamingAssistantId
-      ? live.timelineItems
-      : displayItems
-  const streamingAssistantId = terminalLive
-    ? null
-    : visibleLocalTurn
-      ? state.streamingAssistantId
-      : resolveMergedStreamingAssistantId(
-          displayItems,
-          streamCandidateItems,
-          view.streamingAssistantId,
-        )
-
-  // Run state, worker snapshot, local turn markers and the queue are the target session's own
-  // (`sessionStates[key]`, kept current by its events while in the background). Only the run
-  // status is reconciled with the runtime signals above; nothing comes from the previous view.
-  useUIStore.setState({
-    currentSessionId: view.sessionId,
-    historySessionFile: view.sessionKey,
-    historyTotalCount: view.historyTotal,
-    historyLoadedCount: view.historyLoaded,
-    timelineItems: cloneItems(displayItems),
-    streamingAssistantId,
-  })
+  useUIStore.setState({ currentSessionId: view.sessionId, historySessionFile: view.sessionKey })
   const target = useUIStore.getState()
+  const runUI = runUIOf(view.sessionKey, entryOf(view.sessionKey))
+  const status: RunState['status'] = runUI
+  if (runUI === 'running') target.setSessionRuntimeRunning(view.sessionKey, true)
   if (target.runState.status !== status) {
     target.setRunState(
       status === 'running'
@@ -331,53 +237,16 @@ export function bindViewToUiStore(view: SessionView): void {
         : { status, activeTool: undefined, activeToolStatus: undefined, activeRunId: undefined },
     )
   }
-  if (terminalLive && (target.optimisticPendingUserText != null || target.agentTurnBootstrapping)) {
-    useUIStore.setState({ optimisticPendingUserText: null, agentTurnBootstrapping: false })
-  }
   useUIStore.getState().setWorkerLiveSnapshot({
     sessionId: view.sessionId ?? target.workerLiveSnapshot.sessionId,
     sessionFile: view.sessionKey,
-    status: effectiveRunUI === 'running' ? 'running' : effectiveRunUI === 'failed' ? 'failed' : 'idle',
+    status: runUI,
   })
 }
 
-function mergeLiveIntoItems(sessionKey: string, diskItems: TimelineItem[]): TimelineItem[] {
-  const live = getLiveSessionTimeline(sessionKey)
-  if (!live || live.timelineItems.length === 0) {
-    return projectTimelineItems(diskItems) as TimelineItem[]
-  }
-  let merged = mergeLiveTimelineWithHistoryTail(
-    diskItems,
-    live.timelineItems,
-    live.persistedEntryOverlap,
-  )
-  merged = applyLiveStreamingTextToMergedTimeline(
-    merged,
-    live.timelineItems,
-    live.streamingAssistantId,
-  )
-  return projectTimelineItems(merged) as TimelineItem[]
-}
-
-/** Prefer the timeline that keeps more user turns and structure (anti misalignment). */
-function timelineRichnessScore(items: TimelineItem[]): number {
-  const users = items.reduce((n, item) => (item.type === 'user-message' ? n + 1 : n), 0)
-  const asstChars = items.reduce(
-    (n, item) =>
-      item.type === 'assistant-message'
-        ? n + (item.text?.length ?? 0) + (item.thinkingText?.length ?? 0)
-        : n,
-    0,
-  )
-  return users * 1_000_000_000 + items.length * 1_000_000 + asstChars
-}
-
-function pickRicherTimeline(a: TimelineItem[], b: TimelineItem[]): TimelineItem[] {
-  return timelineRichnessScore(a) >= timelineRichnessScore(b) ? a : b
-}
-
 /**
- * Sync focus pointer and bind cache immediately. Returns whether cache had items (instant path).
+ * Sync focus pointer and paint the session's own rows immediately. Returns whether it had rows
+ * (instant path).
  */
 export function focusSessionSync(sessionId: string, sessionFile: string): {
   sessionKey: string
@@ -385,402 +254,151 @@ export function focusSessionSync(sessionId: string, sessionFile: string): {
   view: SessionView
 } {
   captureFocusFromUiStore()
+  // Background sessions batch their stream text too; land it before painting the target.
+  flushAllStreamPendingSync()
 
   const sessionKey = sessionKeyFromFile(sessionFile)
   focusKey = sessionKey
 
-  let view = views.get(sessionKey)
-  const live = getLiveSessionTimeline(sessionKey)
-  if (!view) {
-    view = emptyView(sessionKey, sessionId)
-  } else {
-    view = {
-      ...view,
-      sessionId: sessionId ?? view.sessionId,
-      lastFocusedAt: Date.now(),
-    }
-    // Refresh runUI + re-merge live stream so switch-back does not paint stale order.
-    const runtime = useUIStore.getState().sessionRuntimeRunning ?? {}
-    const runtimeRunning =
-      runtime[sessionKey] === true ||
-      Object.entries(runtime).some(([k, v]) => v && sessionFilesEqual(k, sessionKey))
-    const liveRunning =
-      live?.runState.status === 'running' ||
-      live?.streamingAssistantId != null ||
-      live?.optimisticPendingUserText != null ||
-      live?.agentTurnBootstrapping === true
-    const terminalLive = live != null && !liveRunning
-    const remixedItems =
-      view.items.length > 0 ? mergeLiveIntoItems(sessionKey, view.items) : view.items
-    const remixedStreamingAssistantId = resolveMergedStreamingAssistantId(
-      remixedItems,
-      live?.timelineItems ?? view.items,
-      live ? live.streamingAssistantId : view.streamingAssistantId,
-    )
-    if (runtimeRunning || liveRunning || (view.runUI === 'running' && !terminalLive)) {
-      view = {
-        ...view,
-        items: remixedItems,
-        runUI: 'running',
-        streamingAssistantId: remixedStreamingAssistantId,
-        optimisticPendingUserText: live
-          ? live.optimisticPendingUserText
-          : view.optimisticPendingUserText,
-        agentTurnBootstrapping: live
-          ? live.agentTurnBootstrapping
-          : view.agentTurnBootstrapping,
-      }
-    } else {
-      const resolved =
-        live?.runState.status === 'failed'
-          ? 'failed'
-          : resolveRunUI(sessionKey, {
-              runtime,
-              streamingAssistantId: remixedStreamingAssistantId,
-              optimisticPendingUserText: terminalLive ? null : view.optimisticPendingUserText,
-              agentTurnBootstrapping: terminalLive ? false : view.agentTurnBootstrapping,
-              workerSessionFile: sessionKey,
-              workerStatus: 'idle',
-            })
-      view = {
-        ...view,
-        items: remixedItems,
-        runUI: resolved,
-        streamingAssistantId: remixedStreamingAssistantId,
-        optimisticPendingUserText: terminalLive ? null : view.optimisticPendingUserText,
-        agentTurnBootstrapping: terminalLive ? false : view.agentTurnBootstrapping,
-      }
-    }
-  }
-  view = {
-    ...view,
-    pendingSteering: [...(live?.pendingSteering ?? view.pendingSteering)],
-    pendingFollowUp: [...(live?.pendingFollowUp ?? view.pendingFollowUp)],
-  }
-  views.set(sessionKey, view)
-
-  // Any non-empty cache paints immediately — even if a previous hydrate left phase='hydrating'
+  const instant = (entryOf(sessionKey)?.timelineItems.length ?? 0) > 0
+  const prior = meta.get(sessionKey)
+  // Any non-empty session paints immediately — even if a previous hydrate left phase='hydrating'
   // (user switched away mid-fetch). Streaming switch-back must never stick on skeleton.
-  const instant = view.items.length > 0
-  if (instant && view.phase !== 'ready' && view.phase !== 'cached') {
-    view = { ...view, phase: 'cached', lastFocusedAt: Date.now() }
-    views.set(sessionKey, view)
-  }
+  const phase: SessionViewPhase =
+    instant && prior?.phase !== 'ready' ? 'cached' : (prior?.phase ?? (instant ? 'cached' : 'empty'))
+  meta.set(sessionKey, {
+    sessionId: sessionId ?? prior?.sessionId ?? null,
+    phase,
+    lastFocusedAt: Date.now(),
+    sessionMeta: prior?.sessionMeta,
+  })
+
   // Set loading BEFORE bind so empty cold targets never paint one frame of "empty chat".
   useUIStore.getState().setHistoryLoading(!instant)
+  const view = getSessionView(sessionKey)!
   bindViewToUiStore(view)
   useUIStore.getState().markSessionViewed(sessionFile)
   useUIStore.getState().setComposerWidget(getSessionComposerWidget(sessionFile))
   evictSessionViewsIfNeeded()
   reportVisibleSession(sessionFile)
 
-  return { sessionKey, instant, view }
+  return { sessionKey, instant, view: getSessionView(sessionKey)! }
+}
+
+/** Disk tail merged with the session's own in-memory rows (live tail, optimistic rows). */
+function mergeDiskWithSessionRows(diskProjected: TimelineItem[], entry: SessionState | undefined): TimelineItem[] {
+  const rows = entry?.timelineItems ?? []
+  if (rows.length === 0) return diskProjected
+  let merged = mergeLiveTimelineWithHistoryTail(diskProjected, rows)
+  merged = applyLiveStreamingTextToMergedTimeline(merged, rows, entry?.streamingAssistantId ?? null)
+  return projectTimelineItems(merged) as TimelineItem[]
 }
 
 /**
- * Background / cold hydrate: disk tail + live merge. Cancelled via navToken.
+ * Background / cold hydrate: read the disk tail and merge it into the session's own entry.
+ * Cancelled via navToken. Works the same whether or not the session is visible.
  */
 export async function hydrateSessionView(
-  sessionKey: string,
+  sessionFileOrKey: string,
   sessionId: string | null,
   navToken?: number,
   options?: { bindWorker?: boolean },
 ): Promise<void> {
   if (navToken != null && !assertSessionNavigation(navToken)) return
+  const sessionKey = sessionKeyFromFile(sessionFileOrKey)
 
-  const existing = views.get(sessionKey)
-  const priorItems = existing?.items?.length ? cloneItems(existing.items) : []
-  const priorPhase = existing?.phase
-  if (existing) {
-    // Keep items while hydrating; only mark phase for diagnostics.
-    views.set(sessionKey, {
-      ...existing,
-      phase: existing.items.length > 0 ? existing.phase : 'hydrating',
-    })
-  }
+  const before = entryOf(sessionKey)
+  const priorMeta = meta.get(sessionKey)
+  const hadRows = (before?.timelineItems.length ?? 0) > 0
+  meta.set(sessionKey, {
+    sessionId: sessionId ?? priorMeta?.sessionId ?? null,
+    phase: hadRows ? (priorMeta?.phase ?? 'cached') : 'hydrating',
+    lastFocusedAt: priorMeta?.lastFocusedAt ?? Date.now(),
+    sessionMeta: priorMeta?.sessionMeta,
+  })
 
-  const restorePhaseIfUnfocused = (): void => {
-    // User left this session mid-hydrate — never leave phase stuck as hydrating
-    // or switch-back treats non-empty cache as cold open (endless skeleton).
-    const current = views.get(sessionKey)
-    if (!current) return
-    if (current.phase === 'ready' || current.phase === 'cached' || current.phase === 'error') return
-    const phase: SessionViewPhase =
-      current.items.length > 0 ? 'cached' : priorPhase === 'ready' ? 'ready' : 'empty'
-    views.set(sessionKey, { ...current, phase })
+  const restorePhaseIfUnfinished = (): void => {
+    // Never leave phase stuck as hydrating, or switch-back treats rows as a cold open.
+    const current = meta.get(sessionKey)
+    if (!current || current.phase !== 'hydrating') return
+    const rows = entryOf(sessionKey)?.timelineItems.length ?? 0
+    meta.set(sessionKey, { ...current, phase: rows > 0 ? 'cached' : priorMeta?.phase === 'ready' ? 'ready' : 'empty' })
   }
+  const focused = (): boolean => sessionFilesEqual(focusKey, sessionKey)
 
   try {
-    // Prefer single tail fetch for speed; bypass slice cache when the view is empty or a
-    // background turn ended since the last read (disk is then authoritative for the tail).
-    // Disk-first IPC — must not spawn worker (see session.getMessages).
+    // Bypass the slice cache when nothing is loaded yet or a background turn ended since the
+    // last read (disk is then authoritative for the tail). Disk-first IPC — never spawns a worker.
     const diskAuthoritative = isSessionDiskAuthoritative(sessionKey)
-    const bypass = !existing?.items.length || diskAuthoritative
-    const hist = await fetchSessionHistoryTail(sessionKey, 80, { bypassCache: bypass })
+    const hist = await fetchSessionHistoryTail(sessionKey, 80, { bypassCache: !hadRows || diskAuthoritative })
     if (navToken != null && !assertSessionNavigation(navToken)) {
-      restorePhaseIfUnfocused()
-      return
-    }
-    // Re-check after the await: a queued follow-up may have started a new turn meanwhile.
-    const reconcileFromDisk =
-      diskAuthoritative && !hist.error && !sessionTurnActive(sessionKey)
-    const reconcileLoadedCount = (prefixCount: number): number =>
-      prefixCount > 0
-        ? Math.min(
-            hist.totalCount,
-            Math.max(
-              hist.sourceCount,
-              (existing?.historyLoaded ?? 0) +
-                Math.max(0, hist.totalCount - (existing?.historyTotal ?? hist.totalCount)),
-            ),
-          )
-        : Math.min(hist.totalCount, hist.sourceCount)
-    const finishDiskReconcile = (): void => {
-      // Disk now covers every live row of the finished turn — drop live provenance so later
-      // switch-backs never re-merge the stale switch-away capture.
-      clearSessionDiskAuthoritative(sessionKey)
-      clearLiveSessionTimeline(sessionKey)
-    }
-    if (!sessionFilesEqual(focusKey, sessionKey)) {
-      // Still merge disk into cache in background so next focus is fresh, but do not bind.
-      if (!hist.error && hist.items) {
-        const diskItems = sanitizeHistoryTimeline(hist.items as TimelineItem[])
-        const projected = projectTimelineItems(diskItems) as TimelineItem[]
-        const reconciled = reconcileFromDisk ? spliceFreshDiskTail(priorItems, projected) : null
-        const merged = reconciled ? reconciled.items : mergeLiveIntoItems(sessionKey, projected)
-        // Prefer richer of disk-merge vs prior (streaming capture often longer than disk mid-turn)
-        const prefer =
-          reconciled ||
-          merged.length >= priorItems.length ||
-          timelineItemTextScore(merged) >= timelineItemTextScore(priorItems)
-            ? merged
-            : priorItems
-        const live = getLiveSessionTimeline(sessionKey)
-        const runtime = useUIStore.getState().sessionRuntimeRunning ?? {}
-        const streamingAssistantId = resolveMergedStreamingAssistantId(
-          prefer,
-          live?.timelineItems ?? existing?.items ?? prefer,
-          live ? live.streamingAssistantId : (existing?.streamingAssistantId ?? null),
-        )
-        const runUI = resolveRunUI(sessionKey, {
-          runtime,
-          streamingAssistantId,
-          optimisticPendingUserText: live?.optimisticPendingUserText ?? null,
-          agentTurnBootstrapping: live?.agentTurnBootstrapping ?? false,
-          workerSessionFile: sessionKey,
-          workerStatus:
-            runtime[sessionKey] ||
-            Object.entries(runtime).some(([k, v]) => v && sessionFilesEqual(k, sessionKey))
-              ? 'running'
-              : 'idle',
-        })
-        views.set(sessionKey, {
-          sessionKey,
-          sessionId: sessionId ?? existing?.sessionId ?? null,
-          items: cloneItems(prefer),
-          historyTotal: Math.max(hist.totalCount, existing?.historyTotal ?? 0),
-          historyLoaded: reconciled
-            ? reconcileLoadedCount(reconciled.prefixCount)
-            : Math.max(hist.sourceCount, existing?.historyLoaded ?? 0),
-          runUI,
-          streamingAssistantId,
-          optimisticPendingUserText: live
-            ? live.optimisticPendingUserText
-            : (existing?.optimisticPendingUserText ?? null),
-          agentTurnBootstrapping: live
-            ? live.agentTurnBootstrapping
-            : (existing?.agentTurnBootstrapping ?? false),
-          pendingSteering: live?.pendingSteering
-            ? [...live.pendingSteering]
-            : existing?.pendingSteering
-              ? [...existing.pendingSteering]
-              : [],
-          pendingFollowUp: live?.pendingFollowUp
-            ? [...live.pendingFollowUp]
-            : existing?.pendingFollowUp
-              ? [...existing.pendingFollowUp]
-              : [],
-          phase: prefer.length > 0 ? 'cached' : 'empty',
-          lastFocusedAt: existing?.lastFocusedAt ?? Date.now(),
-          sessionMeta: hist.sessionMeta ?? existing?.sessionMeta,
-        })
-        if (reconciled) finishDiskReconcile()
-      } else {
-        restorePhaseIfUnfocused()
-      }
+      restorePhaseIfUnfinished()
       return
     }
 
     if (hist.error) {
-      const failed = views.get(sessionKey) ?? emptyView(sessionKey, sessionId)
-      // Keep prior items on error so switch-back still paints
-      views.set(sessionKey, {
-        ...failed,
-        items: failed.items.length ? failed.items : priorItems,
-        phase: failed.items.length || priorItems.length ? 'cached' : 'error',
-      })
-      if (sessionFilesEqual(focusKey, sessionKey)) {
-        useUIStore.getState().setHistoryLoading(false)
-      }
+      const rows = entryOf(sessionKey)?.timelineItems.length ?? 0
+      const m = meta.get(sessionKey)
+      if (m) meta.set(sessionKey, { ...m, phase: rows > 0 ? 'cached' : 'error' })
+      if (focused()) useUIStore.getState().setHistoryLoading(false)
       return
     }
 
-    const focusedHere = sessionFilesEqual(focusKey, sessionKey)
-    let focusedState: ReturnType<typeof useUIStore.getState> | null = null
-    if (focusedHere && sessionFilesEqual(useUIStore.getState().historySessionFile, sessionKey)) {
-      flushStreamPendingSync(useUIStore.getState, useUIStore.setState)
-      focusedState = useUIStore.getState()
-    }
-
+    // Land batched stream text, then read the session's entry as it is *now* (events may have
+    // appended rows during the fetch).
+    flushAllStreamPendingSync()
+    const entry = entryOf(sessionKey)
+    const rows = entry?.timelineItems ?? []
     const diskItems = sanitizeHistoryTimeline(hist.items as TimelineItem[])
     const projected = projectTimelineItems(diskItems) as TimelineItem[]
-    // Finished background turn: disk is authoritative for the tail — skip the richness
-    // heuristics below, they would keep the longer switch-away capture (#99).
-    const reconciled = reconcileFromDisk ? spliceFreshDiskTail(priorItems, projected) : null
-    let merged = reconciled ? reconciled.items : mergeLiveIntoItems(sessionKey, projected)
-    // Mid-stream disk is often shorter than the live capture we just left —
-    // never replace a richer in-memory timeline with a thinner disk snapshot.
-    // Always re-merge through live (never assign raw priorItems alone — drops tools / misorders).
-    if (
-      !reconciled &&
-      priorItems.length > 0 &&
-      (timelineItemTextScore(priorItems) > timelineItemTextScore(merged) ||
-        priorItems.length > merged.length)
-    ) {
-      const fromPrior = mergeLiveIntoItems(sessionKey, priorItems)
-      merged = pickRicherTimeline(fromPrior, merged)
-    }
 
-    if (!reconciled && focusedState?.timelineItems.length) {
-      const focusedItems = projectTimelineItems(focusedState.timelineItems) as TimelineItem[]
-      const withFocusedTail = mergeLiveTimelineWithHistoryTail(projected, focusedItems)
-      merged = pickRicherTimeline(withFocusedTail, merged)
-    }
+    // Finished background turn: disk is authoritative for the tail (#99) — splice it in place of
+    // whatever the session held, keeping its earlier loaded prefix. A turn that restarted
+    // meanwhile (queued follow-up) keeps its live rows.
+    const turnActive = sessionTurnActive(sessionKey)
+    const reconciled = diskAuthoritative && !turnActive ? spliceFreshDiskTail(rows, projected) : null
+    const merged = reconciled ? reconciled.items : mergeDiskWithSessionRows(projected, entry)
 
-    const live = getLiveSessionTimeline(sessionKey)
-    const runtime = useUIStore.getState().sessionRuntimeRunning ?? {}
-    // Do NOT await worker getState on every hydrate — freezes switches when pool is busy.
-    // Runtime map + live cache cover running badges.
+    const loadedFromDisk = reconciled
+      ? reconciled.prefixCount > 0
+        ? Math.min(
+            hist.totalCount,
+            Math.max(
+              hist.sourceCount,
+              (entry?.historyLoadedCount ?? 0) +
+                Math.max(0, hist.totalCount - (entry?.historyTotalCount ?? hist.totalCount)),
+            ),
+          )
+        : Math.min(hist.totalCount, hist.sourceCount)
+      : Math.min(hist.totalCount, hist.sourceCount)
+    // A view-jump reveal may have loaded far more history than this tail; never shrink the counter.
+    const historyLoadedCount = reconciled
+      ? loadedFromDisk
+      : Math.max(loadedFromDisk, entry?.historyLoadedCount ?? 0)
 
-    const priorRunUI = existing?.runUI
-    const runtimeSaysRunning =
-      runtime[sessionKey] === true ||
-      Object.entries(runtime).some(([k, v]) => v && sessionFilesEqual(k, sessionKey))
-    const liveSaysRunning =
-      live?.runState.status === 'running' ||
-      live?.streamingAssistantId != null ||
-      live?.optimisticPendingUserText != null ||
-      live?.agentTurnBootstrapping === true
-    const priorRunningWithoutTerminalLive = priorRunUI === 'running' && !live
+    const streamingAssistantId = reconciled
+      ? null
+      : resolveMergedStreamingAssistantId(merged, rows, entry?.streamingAssistantId ?? null)
 
-    const streamCandidateItems = focusedState
-      ? focusedState.timelineItems
-      : live
-        ? live.timelineItems
-        : (existing?.items ?? merged)
-    const streamCandidateId = focusedState
-      ? focusedState.streamingAssistantId
-      : live
-        ? live.streamingAssistantId
-        : (existing?.streamingAssistantId ?? null)
-    const streamingAssistantId = resolveMergedStreamingAssistantId(
-      merged,
-      streamCandidateItems,
-      streamCandidateId,
-    )
-    const optimisticPendingUserText = focusedState
-      ? focusedState.optimisticPendingUserText
-      : live
-        ? live.optimisticPendingUserText
-        : (existing?.optimisticPendingUserText ?? null)
-    const agentTurnBootstrapping = focusedState
-      ? focusedState.agentTurnBootstrapping
-      : live
-        ? live.agentTurnBootstrapping
-        : (existing?.agentTurnBootstrapping ?? false)
-
-    const runUI = resolveRunUI(sessionKey, {
-      runtime,
+    patchSessionState(sessionKey, {
+      timelineItems: merged,
       streamingAssistantId,
-      optimisticPendingUserText,
-      agentTurnBootstrapping,
-      workerSessionFile: sessionKey,
-      workerStatus:
-        live?.runState.status === 'failed'
-          ? 'failed'
-          : runtimeSaysRunning || liveSaysRunning || priorRunningWithoutTerminalLive
-            ? 'running'
-            : 'idle',
+      historyTotalCount: hist.totalCount,
+      historyLoadedCount,
     })
-    // Never demote a still-running session to idle just because disk hydrate lacks markers.
-    const finalRunUI: SessionRunUI =
-      runUI === 'failed'
-        ? 'failed'
-        : runUI === 'running' ||
-            priorRunningWithoutTerminalLive ||
-            runtimeSaysRunning ||
-            liveSaysRunning
-          ? 'running'
-          : 'idle'
+    if (turnActive) useUIStore.getState().setSessionRuntimeRunning(sessionKey, true)
+    if (reconciled) clearSessionDiskAuthoritative(sessionKey)
 
-    if (finalRunUI === 'running') {
-      useUIStore.getState().setSessionRuntimeRunning(sessionKey, true)
-    }
+    const m = meta.get(sessionKey)
+    meta.set(sessionKey, {
+      sessionId: sessionId ?? m?.sessionId ?? null,
+      phase: focused() ? 'ready' : merged.length > 0 ? 'cached' : 'empty',
+      lastFocusedAt: m?.lastFocusedAt ?? Date.now(),
+      sessionMeta: hist.sessionMeta ?? m?.sessionMeta,
+    })
 
-    let next: SessionView = {
-      sessionKey,
-      sessionId: sessionId ?? existing?.sessionId ?? null,
-      items: cloneItems(merged),
-      historyTotal: hist.totalCount,
-      historyLoaded: reconciled
-        ? reconcileLoadedCount(reconciled.prefixCount)
-        : Math.min(hist.totalCount, hist.sourceCount),
-      runUI: finalRunUI,
-      streamingAssistantId,
-      optimisticPendingUserText,
-      agentTurnBootstrapping,
-      pendingSteering: [
-        ...(focusedState?.pendingSteering ?? live?.pendingSteering ?? existing?.pendingSteering ?? []),
-      ],
-      pendingFollowUp: [
-        ...(focusedState?.pendingFollowUp ?? live?.pendingFollowUp ?? existing?.pendingFollowUp ?? []),
-      ],
-      phase: 'ready',
-      lastFocusedAt: Date.now(),
-      sessionMeta: hist.sessionMeta,
-    }
-    views.set(sessionKey, next)
-
-    if (sessionFilesEqual(focusKey, sessionKey)) {
-      // A view-jump reveal may have loaded far more history than this 80-item
-      // tail fetch (its store supersedes the tail). Never shrink the display
-      // store back to the tail mid-reveal — that removed the just-landed target
-      // from the DOM and visually "stole" the jump. Compare against the CURRENT
-      // focused store (the merge above used a snapshot captured before the
-      // fetch), keep the richer items, and never reset the loaded counter.
-      const focusedNow = useUIStore.getState()
-      if (sessionFilesEqual(focusedNow.historySessionFile, sessionKey)) {
-        // Keep the richer display store and never shrink the loaded counter.
-        const focusedHasLocalTurn =
-          focusedNow.optimisticPendingUserText != null ||
-          focusedNow.agentTurnBootstrapping === true ||
-          (typeof focusedNow.streamingAssistantId === 'string' &&
-            focusedNow.streamingAssistantId.startsWith('opt-asst-'))
-        // The focused store is the switch-back paint of a stale capture when reconciling
-        // from disk — only a new local turn (sent after switching back) outranks disk.
-        const focusedRicher =
-          focusedHasLocalTurn ||
-          (!reconciled && focusedNow.timelineItems.length >= next.items.length)
-        next = {
-          ...next,
-          items: focusedRicher ? cloneItems(focusedNow.timelineItems) : next.items,
-          historyLoaded:
-            reconciled && !focusedRicher
-              ? next.historyLoaded
-              : Math.max(next.historyLoaded, focusedNow.historyLoadedCount),
-        }
-      }
-      bindViewToUiStore(next)
+    if (focused()) {
+      bindViewToUiStore(getSessionView(sessionKey)!)
       if (options?.bindWorker !== false) {
         // Normal conversations bind before showing composer meta/context.
         await ipcClient.invoke('session.setPendingBind', { sessionFile: sessionKey }).catch(() => {})
@@ -788,27 +406,12 @@ export async function hydrateSessionView(
       useUIStore.getState().setHistoryLoading(false)
       void applyComposerDisplayMeta(hist.sessionMeta)
     }
-    if (reconciled) finishDiskReconcile()
   } catch (error) {
     console.error('[session-shell] hydrate failed:', error)
-    restorePhaseIfUnfocused()
+    restorePhaseIfUnfinished()
     if (navToken != null && !assertSessionNavigation(navToken)) return
-    if (sessionFilesEqual(focusKey, sessionKey)) {
-      useUIStore.getState().setHistoryLoading(false)
-    }
+    if (focused()) useUIStore.getState().setHistoryLoading(false)
   }
-}
-
-/** Rough richness score: prefer timelines with more user rows + longer assistant text. */
-function timelineItemTextScore(items: TimelineItem[]): number {
-  let score = items.length * 1_000
-  for (const item of items) {
-    if (item.type === 'user-message') score += 1_000_000
-    if (item.type === 'assistant-message') {
-      score += (item.text?.length ?? 0) + (item.thinkingText?.length ?? 0)
-    }
-  }
-  return score
 }
 
 /**
@@ -827,9 +430,10 @@ export async function focusSession(
   return { instant }
 }
 
-/** Test helper: clear all views */
+/** Test helper: forget every session's rows and the view bookkeeping */
 export function clearSessionShellForTests(): void {
-  views.clear()
+  meta.clear()
   focusKey = null
   clearSessionDiskAuthoritative()
+  useUIStore.setState({ sessionStates: {}, viewSessionKey: null })
 }

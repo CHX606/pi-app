@@ -94,6 +94,11 @@ export function flushStreamPendingSync<S extends StreamStore>(
   if (streamPending.size === 0) cancelStreamFlush()
 }
 
+/** Flush every session's batched deltas now (before a view switch reads another session's rows). */
+export function flushAllStreamPendingSync(): void {
+  if (streamPending.size > 0) flushAllScopes()
+}
+
 export function queueStreamDelta<S extends StreamStore>(
   get: () => S,
   set: (fn: (s: S) => Partial<S> | S) => void,

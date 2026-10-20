@@ -45,7 +45,6 @@ import { activateWorkspace, switchSessionInPlace } from '../activate-workspace'
 import { clearSessionShellForTests, focusSessionSync } from '../session-shell'
 import { handleNotificationOpenSession } from '../notification-open-session'
 import { fetchSessionHistoryTail } from '../session-history'
-import { clearLiveSessionTimeline } from '../live-session-timeline-cache'
 import { clearStreamPending, flushStreamPendingSync } from '@renderer/stores/ui-store-stream'
 import { ipcClient } from '../ipc-client'
 import { beginSessionNavigation, isSessionNavigationCurrent } from '../session-navigation'
@@ -59,7 +58,6 @@ describe('workspace/session navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     clearStreamPending()
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     useUIStore.setState({
       currentWorkspace: null,

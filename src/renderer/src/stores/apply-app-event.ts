@@ -11,10 +11,9 @@ import {
   handleTool,
 } from '@renderer/stores/apply-app-event-handlers'
 import { applyBackgroundAppEvent } from '@renderer/stores/apply-app-event-background'
-import { sessionStoreApi } from '@renderer/stores/session-scope'
+import { markSessionTurnEnded, sessionStoreApi } from '@renderer/stores/session-scope'
 import { sessionKeyOf } from '@renderer/stores/session-state'
 import { applyExtensionWidgetEvent, getSessionComposerWidget } from '@renderer/lib/extension-widget-cache'
-import { markLiveSessionTurnEnded } from '@renderer/lib/live-session-timeline-cache'
 import { isAbortQueueIgnoreActive, shouldIgnoreAppEventAfterAbort } from '@renderer/lib/abort-ui-hold'
 import { reduceSubagentSessionGroupToolEvent } from '@renderer/lib/subagent-session-activity'
 import type { StoreApi } from '@renderer/stores/apply-app-event-types'
@@ -77,11 +76,12 @@ function applySessionEvent(
       } else if (event.phase === 'idle') {
         if (api.get().runState.status === 'idle') {
           useUIStore.getState().setSessionRuntimeRunning(sessionFile, false)
-          markLiveSessionTurnEnded(sessionFile, 'idle')
+          markSessionTurnEnded(sessionFile, 'idle')
         }
       } else if (event.phase === 'failed' || event.phase === 'cancelled') {
         useUIStore.getState().setSessionRuntimeRunning(sessionFile, false)
-        markLiveSessionTurnEnded(sessionFile, event.phase === 'failed' ? 'failed' : 'idle')
+        // The session's own markers decide whether a switch-back shows it running.
+        markSessionTurnEnded(sessionFile, event.phase === 'failed' ? 'failed' : 'idle')
       }
       break
     }
@@ -100,7 +100,7 @@ function applySessionEvent(
       break
     case 'agent_error': {
       handleAgentError(event, api)
-      markLiveSessionTurnEnded(sessionFile, event.kind === 'aborted' ? 'idle' : 'failed')
+      if (event.kind !== 'retry') markSessionTurnEnded(sessionFile, event.kind === 'aborted' ? 'idle' : 'failed')
       break
     }
     case 'completion': {

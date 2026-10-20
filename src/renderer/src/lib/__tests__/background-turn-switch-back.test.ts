@@ -17,7 +17,7 @@ vi.mock('@renderer/features/timeline/timeline-bottom-anchor', () => ({ requestTi
 
 import { isInterruptedAssistantRow } from '@shared/timeline-incomplete'
 import { captureVisibleLiveSessionTimeline } from '@renderer/lib/capture-live-session-timeline'
-import { clearLiveSessionTimeline, saveLiveSessionTimeline } from '@renderer/lib/live-session-timeline-cache'
+import { seedSessionForTest } from '@renderer/test/session-state-helpers'
 import { reloadCurrentSessionData } from '@renderer/lib/reload-current-session-data'
 import { clearSessionHistoryCache, fetchSessionHistoryTail } from '@renderer/lib/session-history'
 import {
@@ -61,7 +61,6 @@ describe('#99 background turn completion → switch back', () => {
       return {}
     })
     clearStreamPending()
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     clearSessionHistoryCache()
   })
@@ -184,7 +183,7 @@ describe('#99 background turn completion → switch back', () => {
       runState: { status: 'idle', toolCount: 0, errorCount: 0 },
       workerLiveSnapshot: { sessionId: 'session-a', sessionFile: sessionAKey, status: 'idle' },
     })
-    saveLiveSessionTimeline({
+    seedSessionForTest({
       sessionId: 'session-a', sessionFile: sessionAKey, timelineItems: stale,
       streamingAssistantId: null, optimisticPendingUserText: null, agentTurnBootstrapping: false,
       pendingSteering: [], pendingFollowUp: [], runState: useUIStore.getState().runState,

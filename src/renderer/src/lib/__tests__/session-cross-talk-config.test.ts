@@ -19,7 +19,6 @@ vi.mock('@renderer/features/timeline/timeline-bottom-anchor', () => ({ requestTi
 import type { AppEvent } from '@shared/app-events'
 import { applyThinkingLevel } from '@renderer/features/composer/thinking-level-actions'
 import { applyComposerDisplayMeta, forgetSessionDisplayMeta } from '@renderer/lib/session-display-meta'
-import { clearLiveSessionTimeline } from '@renderer/lib/live-session-timeline-cache'
 import { clearSessionHistoryCache } from '@renderer/lib/session-history'
 import { clearSessionShellForTests, focusSessionSync } from '@renderer/lib/session-shell'
 import { useUIStore } from '@renderer/stores/ui-store'
@@ -51,7 +50,6 @@ describe('session model / thinking cross-talk', () => {
     })
     ipcMock.invoke.mockReset()
     ipcMock.invoke.mockResolvedValue({})
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     clearSessionHistoryCache()
     forgetSessionDisplayMeta()

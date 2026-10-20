@@ -9,10 +9,11 @@ const src = (p) => readFileSync(join(root, p), 'utf8').replace(/\r\n/g, '\n')
 
 describe('live session switch binding', () => {
   it('clears stale pendingBind when restoring a worker-bound live session from cache', () => {
-    // Session shell paints live cache via focusSessionSync; open-session always sets pendingBind
+    // Session shell paints the session's own state via focusSessionSync; open-session always sets pendingBind
     // for the focused file (lazy Worker). Live restore no longer short-circuits open-session.
     const shell = src('src/renderer/src/lib/session-shell.ts')
-    assert.match(shell, /getLiveSessionTimeline/)
+    assert.match(shell, /sessionStates/)
+    assert.doesNotMatch(shell, /live-session-timeline-cache/)
     assert.match(shell, /liveTurnActive|composerTurnActive|instant/)
 
     const openSession = src('src/renderer/src/lib/open-session.ts')

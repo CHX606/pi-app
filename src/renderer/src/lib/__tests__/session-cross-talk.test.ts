@@ -16,7 +16,6 @@ vi.mock('@renderer/lib/extension-ui-tool-sync', () => ({ reconcileAllStaleIntera
 vi.mock('@renderer/features/timeline/timeline-bottom-anchor', () => ({ requestTimelineBottomAnchor: vi.fn() }))
 
 import type { AppEvent } from '@shared/app-events'
-import { clearLiveSessionTimeline } from '@renderer/lib/live-session-timeline-cache'
 import { clearSessionHistoryCache } from '@renderer/lib/session-history'
 import { clearSessionShellForTests, focusSessionSync } from '@renderer/lib/session-shell'
 import { clearStreamPending } from '@renderer/stores/ui-store-stream'
@@ -48,7 +47,6 @@ describe('session cross-talk', () => {
       return 1
     })
     clearStreamPending()
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     clearSessionHistoryCache()
     useUIStore.setState({
