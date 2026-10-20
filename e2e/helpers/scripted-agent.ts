@@ -98,7 +98,8 @@ export async function launchAgentApp(modelPort: number, opts: { language?: 'en' 
   fs.mkdirSync(agentDir, { recursive: true })
   fs.mkdirSync(project, { recursive: true })
   fs.mkdirSync(configDir, { recursive: true })
-  fs.writeFileSync(path.join(project, 'README.md'), '# demo\n')
+  // A test may have prepared the project (e.g. a git repo); never clobber its files.
+  if (!fs.existsSync(path.join(project, 'README.md'))) fs.writeFileSync(path.join(project, 'README.md'), '# demo\n')
   fs.writeFileSync(path.join(agentDir, 'models.json'), JSON.stringify({
     providers: {
       mock: {
