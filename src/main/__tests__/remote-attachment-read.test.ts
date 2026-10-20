@@ -1,11 +1,11 @@
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 const userData = mkdtempSync(join(tmpdir(), 'pi-remote-att-'))
-vi.mock('electron', () => ({ app: { getPath: () => userData } }))
-
+const { setUserDataDir } = await import('../app-paths')
+setUserDataDir(() => userData)
 const { readRemoteAttachment, writeRemoteAttachment } = await import('../clipboard-temp-images')
 
 describe('readRemoteAttachment', () => {

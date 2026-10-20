@@ -1,7 +1,7 @@
 import { app, utilityProcess, type UtilityProcess } from 'electron'
 import type { WorkerResponsePayload } from '@shared/worker-rpc-types'
 import { resolveActiveSdk } from './sdk-loader'
-import { resolveUtilityEntry } from './utility-entry-path'
+import { resolveUtilityEntry, setUtilityAppPath } from './utility-entry-path'
 import { installBrowserToolBridge, installHostWorkerLauncher } from './worker-manager-pool'
 import type { WorkerTransport } from './worker-transport'
 
@@ -53,6 +53,8 @@ export function createUtilityProcessTransport(proc: UtilityProcess): WorkerTrans
     },
   }
 }
+
+setUtilityAppPath(() => app.getAppPath())
 
 installHostWorkerLauncher(() => {
   const forked = utilityProcess.fork(resolveUtilityEntry('worker.mjs'), [], { stdio: 'pipe' })

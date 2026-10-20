@@ -1,12 +1,15 @@
-import { BrowserWindow, safeStorage } from 'electron'
+import { app, BrowserWindow, safeStorage } from 'electron'
 import Store from 'electron-store'
+import { setUserDataDir } from './app-paths'
 import { CONFIG_DEFAULTS, installConfigBacking, type StoreSchema } from './config-store'
 import { installSecretCipher } from './secret-store'
 
 /**
- * Desktop backings for the config store and secret store. `index.ts` imports this module before
- * anything that reads settings; the headless host (`src/host`) installs its own instead.
+ * Desktop backings for the config store, secret store and userData dir. `index.ts` imports this
+ * module before anything that reads settings; the headless host (`src/host`) installs its own.
  */
+
+setUserDataDir(() => app.getPath('userData'))
 
 const store = new Store<StoreSchema>({ name: 'pi-desktop', defaults: CONFIG_DEFAULTS })
 
