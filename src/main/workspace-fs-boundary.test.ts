@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const roots: string[] = []
 afterEach(() => {
   vi.doUnmock('path')
+  vi.doUnmock('node:fs/promises')
   vi.resetModules()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -15,6 +16,16 @@ async function loadWithWin32Paths() {
   vi.doMock('path', async (original) => {
     const actual = await original<typeof import('path')>()
     return { ...actual.win32, default: actual.win32 }
+  })
+  // On a real Windows host, realpath on \\wsl.localhost\... reaches the WSL share (slow or absent);
+  // fail it fast as on Linux so these path-semantics tests never touch the network.
+  vi.doMock('node:fs/promises', async (original) => {
+    const actual = await original<typeof import('node:fs/promises')>()
+    const realpath = (p: Parameters<typeof actual.realpath>[0]) =>
+      String(p).startsWith('\\\\')
+        ? Promise.reject(Object.assign(new Error(`ENOENT: ${String(p)}`), { code: 'ENOENT' }))
+        : actual.realpath(p)
+    return { ...actual, realpath, default: { ...actual, realpath } }
   })
   return import('./workspace-fs')
 }

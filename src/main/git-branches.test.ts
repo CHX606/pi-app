@@ -19,7 +19,7 @@ beforeAll(async () => {
   other = join(root, 'other')
   await mkdir(repo)
   git(['init', '-q', '-b', 'main'])
-  for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.invalid'], ['commit.gpgsign', 'false'], ['core.hooksPath', join(root, 'none')]]) git(['config', k, v])
+  for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.invalid'], ['commit.gpgsign', 'false'], ['core.autocrlf', 'false'],['core.hooksPath', join(root, 'none')]]) git(['config', k, v])
   await writeFile(join(repo, 'a.txt'), 'one\n')
   git(['add', '.'])
   commit('init')
