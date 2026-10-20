@@ -54,7 +54,7 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
       break
     case 'run': {
       const accepted = handleRun(event, api)
-      const sessionKey = eventSessionFile(event) || api.get().historySessionFile
+      const sessionKey = eventSessionFile(event)
       if (accepted && sessionKey && (event.phase === 'running' || event.phase === 'started')) {
         useUIStore.getState().setSessionRuntimeRunning(sessionKey, true)
       } else if (sessionKey && event.phase === 'idle') {
@@ -75,7 +75,7 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
       handleSlash(event, api)
       break
     case 'queue':
-      if (isAbortQueueIgnoreActive(eventSessionFile(event) || state.historySessionFile)) {
+      if (isAbortQueueIgnoreActive(eventSessionFile(event))) {
         const hasQueued = (event.steering?.length ?? 0) > 0 || (event.followUp?.length ?? 0) > 0
         if (hasQueued) break
       }
@@ -83,7 +83,7 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
       break
     case 'agent_error': {
       handleAgentError(event, api)
-      const sessionKey = eventSessionFile(event) || api.get().historySessionFile
+      const sessionKey = eventSessionFile(event)
       if (sessionKey) {
         markLiveSessionTurnEnded(sessionKey, event.kind === 'aborted' ? 'idle' : 'failed')
       }
@@ -91,7 +91,7 @@ export function applyAppEvent(event: AppEvent, api: StoreApi): void {
     }
     case 'completion': {
       if (event.settled === true) {
-        const sessionKey = eventSessionFile(event) || api.get().historySessionFile
+        const sessionKey = eventSessionFile(event)
         if (sessionKey) useUIStore.getState().markSessionSettled(sessionKey)
       }
       break

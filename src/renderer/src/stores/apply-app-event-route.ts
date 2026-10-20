@@ -2,6 +2,7 @@ import type { SessionScopedAppEvent } from '@shared/app-event-session'
 import { workspacePathsEqual } from '@shared/workspace-path'
 import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { isPlaceholderSessionId } from '@renderer/lib/session-ids'
+import { alertTrace } from '@renderer/lib/alert-trace'
 
 export type AppEventRoute = 'visible' | 'background' | 'drop'
 
@@ -12,46 +13,35 @@ type RouteState = {
   workerLiveSnapshot: { sessionId: string | null; sessionFile: string | null }
 }
 
+/**
+ * Decide where a session event goes, by its `sessionFile` only.
+ *
+ * Worker events always carry the session file (worker `baseEvent()`, filled in by main from the
+ * worker slot). An event without one cannot be attributed to a session, so it is dropped — never
+ * applied to whatever session happens to be visible (that re-lit B with A's run after a switch).
+ */
 export function resolveAppEventRoute(state: RouteState, event: SessionScopedAppEvent): AppEventRoute {
-  const evWs = event.workspaceId
-  const viewWs = state.currentWorkspace
-  if (evWs && viewWs && !workspacePathsEqual(evWs, viewWs)) {
-    if (event.sessionFile) return 'background'
+  const evFile = event.sessionFile
+  if (!evFile) {
+    alertTrace('app event without sessionFile dropped', {
+      type: event.type,
+      phase: (event as { phase?: string }).phase,
+    })
     return 'drop'
   }
 
+  const evWs = event.workspaceId
+  const viewWs = state.currentWorkspace
+  if (evWs && viewWs && !workspacePathsEqual(evWs, viewWs)) return 'background'
+
   const viewFile = state.historySessionFile
-  const workerFile = state.workerLiveSnapshot.sessionFile
-  const evFile = event.sessionFile
+  if (viewFile) return sessionFilesEqual(evFile, viewFile) ? 'visible' : 'background'
+
   const viewSid = state.currentSessionId
-  const workerSid = state.workerLiveSnapshot.sessionId
-  const evSid = event.sessionId
+  if (!viewSid || isPlaceholderSessionId(viewSid)) return 'background'
 
-  if (!viewFile && (!viewSid || isPlaceholderSessionId(viewSid))) return 'background'
-
-  if (evFile) {
-    if (viewFile && sessionFilesEqual(evFile, viewFile)) return 'visible'
-    if (viewFile && !sessionFilesEqual(evFile, viewFile)) {
-      // Multi-session: any other session's events go to background cache (E1), not drop.
-      return 'background'
-    }
-    // viewFile 为空：Worker 绑定的事件视为可见，避免发送瞬间丢首 token
-    if (workerFile && sessionFilesEqual(evFile, workerFile)) return 'visible'
-    if (evFile) return 'background'
-  }
-
-  const backgroundBySid = !!evSid && !!viewSid && !!workerSid && evSid === workerSid && evSid !== viewSid
-  if (backgroundBySid) return 'background'
-  // Different sessionId while viewing another session: still cache for multi-session runtime
-  if (evSid && viewSid && evSid !== viewSid) return 'background'
-
-  // No sessionFile on event: only treat as visible when it matches the view worker snap.
-  // Defaulting to 'visible' caused A's unscoped run events to re-light B after switch.
-  if (viewFile && workerFile && !sessionFilesEqual(viewFile, workerFile)) {
-    return 'background'
-  }
-  if (viewFile && !workerFile && evSid && viewSid && evSid !== viewSid) {
-    return 'background'
-  }
-  return 'visible'
+  // A real session whose file is not known yet (first send): only its bound worker is visible.
+  const workerFile = state.workerLiveSnapshot.sessionFile
+  if (workerFile && sessionFilesEqual(evFile, workerFile)) return 'visible'
+  return 'background'
 }
