@@ -1,4 +1,4 @@
-﻿import { create } from 'zustand'
+﻿import { create, type StateCreator } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { applyAppEvent } from '@renderer/stores/apply-app-event'
 import { sanitizeRunStatePatch } from '@renderer/lib/format-run-display'
@@ -22,6 +22,7 @@ import { createShellSlice } from '@renderer/stores/ui-store-shell-slice'
 import { createRuntimeSlice } from '@renderer/stores/ui-store-runtime-slice'
 import { workspacePathKey } from '@shared/workspace-path'
 import { isAbortQueueIgnoreActive } from '@renderer/lib/abort-ui-hold'
+import { reconcileSessionMirror } from '@renderer/stores/session-state'
 
 export type { TimelineItem, UIState } from '@renderer/stores/ui-store-types'
 
@@ -30,9 +31,40 @@ function nextItemId(): string {
   return `item-${++itemSeq}`
 }
 
+type UIStateCreator = StateCreator<UIState, [['zustand/persist', unknown]], []>
+
+/**
+ * Every write — from inside the store or `useUIStore.setState` — goes through
+ * `reconcileSessionMirror`, so `sessionStates[viewSessionKey]` and the legacy top-level session
+ * fields never disagree.
+ */
+const sessionMirror = (config: UIStateCreator): UIStateCreator => (set, get, api) => {
+  type Partial_ = Partial<UIState> | UIState | ((state: UIState) => Partial<UIState> | UIState)
+  const reconcile = (partial: Partial_): Partial<UIState> | null => {
+    const prev = get()
+    const patch = typeof partial === 'function' ? partial(prev) : partial
+    if (!patch || patch === prev) return null
+    return reconcileSessionMirror(prev, patch)
+  }
+  const savedSetState = api.setState
+  api.setState = ((partial: Partial_, replace?: boolean) => {
+    const patch = reconcile(partial)
+    if (!patch) return
+    return replace ? savedSetState(patch as UIState, true) : savedSetState(patch)
+  }) as typeof api.setState
+  const mirroredSet = ((partial: Partial_, replace?: boolean) => {
+    const patch = reconcile(partial)
+    if (!patch) return
+    return replace ? set(patch as UIState, true) : set(patch)
+  }) as typeof set
+  return config(mirroredSet, get, api)
+}
+
 export const useUIStore = create<UIState>()(
   persist(
-    (set, get) => ({
+    sessionMirror((set, get) => ({
+  sessionStates: {},
+  viewSessionKey: null,
   currentWorkspace: null,
   workspaceFileToOpen: null,
   recentProjects: [],
@@ -345,7 +377,7 @@ export const useUIStore = create<UIState>()(
   processEvent: (event) => {
     applyAppEvent(event, { get, set: (p) => set(p), nextItemId })
   },
-    }),
+    })),
     {
       name: 'pi-desktop-ui',
       storage: createJSONStorage(() => localStorage),

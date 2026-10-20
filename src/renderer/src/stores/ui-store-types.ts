@@ -5,6 +5,7 @@ import type { RightPanelCatalogItem, RightPanelPrefs } from '@shared/right-panel
 import type { WorkerLiveSnapshot } from '@renderer/lib/session-worker-sync'
 import type { SessionAttention } from '@renderer/lib/session-attention'
 import type { SubagentSessionGroup } from '@renderer/lib/subagent-session-types'
+import type { SessionState } from '@renderer/stores/session-state'
 
 export interface SessionItem {
   sessionId: string
@@ -268,5 +269,9 @@ export interface UIState {
   adapterWidgetExpandedBySession: Record<string, boolean>
   setComposerWidget: (state: AdapterWidgetProjection | null) => void
   toggleAdapterWidget: (key: string) => void
+  /** Conversation state per session (normalized sessionFile or a draft key). */
+  sessionStates: Record<string, SessionState>
+  /** Key of the session the view shows; the top-level session fields mirror its entry. */
+  viewSessionKey: string | null
   processEvent: (event: AppEvent) => void
 }
