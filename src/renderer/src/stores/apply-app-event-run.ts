@@ -103,7 +103,7 @@ export function handleRun(event: RunEvent, api: StoreApi): boolean {
     })
     // Compaction always finishes before the run settles; a lost compaction_end
     // event (worker crash) must not leave the badge stuck. 只清本会话的压缩标志
-    const settledFile = eventSessionFile(event) || api.get().historySessionFile
+    const settledFile = eventSessionFile(event)
     api.get().setCompactingSession(settledFile ?? null, false)
     const rs = api.get().runState
     const wasActive = rs.status === 'running' || rs.status === 'failed'

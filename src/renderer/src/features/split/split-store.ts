@@ -51,6 +51,8 @@ export function focusedPaneSession(): PaneSession | null {
   const file = s.historySessionFile
   if (!file || !s.currentSessionId || !s.currentWorkspace) return null
   const meta = s.sessions.find((x) => sessionFilesEqual(x.sessionFile, file))
+  // Mid-switch the id already names the target while the file is still the previous session's.
+  if (meta && meta.sessionId !== s.currentSessionId && s.sessions.some((x) => x.sessionId === s.currentSessionId)) return null
   return { sessionId: s.currentSessionId, sessionFile: file, workspace: s.currentWorkspace, title: meta?.title || meta?.firstMessage || '' }
 }
 
@@ -176,7 +178,7 @@ useUIStore.subscribe((s, prev) => {
   try {
     const layout = useSplitStore.getState()
     const active = layout.panes.find((p) => p.id === layout.activePaneId)
-    if (active?.session?.sessionFile === session.sessionFile && active.session.title === session.title) return
+    if (sessionFilesEqual(active?.session?.sessionFile, session.sessionFile) && active?.session?.title === session.title) return
     useSplitStore.setState(assignSession(layout, layout.activePaneId, session))
   } finally {
     syncing = false

@@ -21,7 +21,9 @@ describe('rewind navigateTree stability', () => {
   it('session-rewind fetches history with leafId after navigate', () => {
     const src = readFileSync(join(root, 'src/renderer/src/lib/session-rewind.ts'), 'utf8')
     assert.match(src, /leafId/)
-    assert.match(src, /clearLiveSessionTimeline/)
+    // Rows are per session: the rewound tail replaces this session's own rows (no side cache).
+    assert.match(src, /loadHistoryItems/)
+    assert.doesNotMatch(src, /live-session-timeline-cache/)
     assert.match(src, /captureFocusFromUiStore/)
   })
 

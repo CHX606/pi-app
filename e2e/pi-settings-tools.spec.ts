@@ -87,8 +87,10 @@ test.describe('pi settings · tools', () => {
       }
       await win.getByRole('button', { name: 'Save', exact: true }).click()
       const file = path.join(agent.home, '.pi', 'agent', 'settings.json')
-      await expect.poll(() => JSON.parse(fs.readFileSync(file, 'utf8')).thinkingBudgets, { timeout: 10_000 }).toEqual({ low: 2048 })
-      expect(JSON.parse(fs.readFileSync(file, 'utf8')).compaction.modelOverrides).toEqual({ 'mock/scripted': { reserveTokens: 400000 } })
+      // The two sections can land in separate writes; wait for both.
+      const saved = () => JSON.parse(fs.readFileSync(file, 'utf8'))
+      await expect.poll(() => saved().thinkingBudgets, { timeout: 10_000 }).toEqual({ low: 2048 })
+      await expect.poll(() => saved().compaction?.modelOverrides, { timeout: 10_000 }).toEqual({ 'mock/scripted': { reserveTokens: 400000 } })
     } finally {
       await agent.close()
       model.close()

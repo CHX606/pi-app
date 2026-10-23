@@ -79,7 +79,7 @@ describe('createNewSessionInPool background mode', () => {
     expect(pool.slotRequest).not.toHaveBeenCalledWith(fg, 'newSession')
     expect(map.get(fg.poolKey)).toBe(fg)
     expect(fg.sessionFile).toBeNull()
-    expect(r.sessionFile).toContain('/tmp/new-1.jsonl')
+    expect(r.sessionFile).toMatch(/[\\/]tmp[\\/]new-1\.jsonl$/)
     // setForeground is the caller's no-op/touch in background mode; eviction protects the desktop's foreground.
     expect(setForeground).toHaveBeenCalledTimes(1)
     expect(setForeground.mock.calls[0][0]).not.toBe(fg)

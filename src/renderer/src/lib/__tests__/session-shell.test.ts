@@ -28,6 +28,7 @@ vi.mock('@renderer/lib/session-display-meta', () => ({
 }))
 vi.mock('@renderer/stores/ui-store-stream', () => ({
   flushStreamPendingSync: vi.fn(),
+  flushAllStreamPendingSync: vi.fn(),
 }))
 
 import { useUIStore } from '@renderer/stores/ui-store'
@@ -44,12 +45,11 @@ import {
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { applyLiveSnapshotToView, composerTurnActive } from '../session-worker-sync'
 import { captureVisibleLiveSessionTimeline } from '../capture-live-session-timeline'
-import { clearLiveSessionTimeline, getLiveSessionTimeline } from '../live-session-timeline-cache'
+import { sessionStateForTest } from '@renderer/test/session-state-helpers'
 
 describe('session-shell', () => {
   beforeEach(() => {
     clearSessionShellForTests()
-    clearLiveSessionTimeline()
     useUIStore.setState({
       currentSessionId: null,
       historySessionFile: null,
@@ -199,7 +199,7 @@ describe('session-shell', () => {
       useUIStore.getState(),
     )
     expect(useUIStore.getState().streamingAssistantId).toBeNull()
-    expect(getLiveSessionTimeline(sessionFile)?.runState.status).toBe('idle')
+    expect(sessionStateForTest(sessionFile)?.runState.status).toBe('idle')
 
     for (let open = 0; open < 2; open++) {
       captureVisibleLiveSessionTimeline()

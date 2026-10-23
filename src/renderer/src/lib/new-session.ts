@@ -37,11 +37,10 @@ export async function materializePendingNewSession(
     current.currentSessionId === store.currentSessionId &&
     current.historySessionFile === store.historySessionFile
   if (ownsView) {
-    store.clearPendingNewSessionPlaceholder()
-    store.setCurrentSession(sessionId)
-    // Keep the optimistic first turn only in the view that submitted it.
+    // The draft the first turn was typed in becomes this session (optimistic turn included);
+    // a view that moved on keeps its own state.
+    store.promoteViewSession({ sessionId, sessionFile })
     store.clearFileChanges()
-    store.setHistoryMeta(0, 0, sessionFile)
   }
   insertSessionRowOptimistically(workspaceId, { sessionId, sessionFile, title })
   // The caller still needs the file when creation finishes in the background.
@@ -53,6 +52,8 @@ export async function materializePendingNewSession(
   // Apply the user's pre-selected model/thinking level to the new session. Sequential on purpose:
   // the thinking level is clamped against the model's supported levels, so it must follow a
   // confirmed model switch (and is skipped when the switch is rejected).
+  // `store` is the snapshot taken when the user sent, while the view was the draft: these are the
+  // draft's own choices, not whatever session is visible now.
   const { runState } = store
   if (sessionFile) {
     if (runState.model && runState.model.includes('/')) {

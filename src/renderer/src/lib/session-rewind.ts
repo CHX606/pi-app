@@ -85,12 +85,6 @@ export async function navigateSessionToEntry(targetId: string): Promise<boolean>
       '@renderer/lib/session-history'
     )
     clearSessionHistoryCache(file)
-    try {
-      const { clearLiveSessionTimeline } = await import('@renderer/lib/live-session-timeline-cache')
-      clearLiveSessionTimeline(file)
-    } catch {
-      /* optional */
-    }
 
     if (!stillCurrent()) return false
     // Soft loading: keep current items visible while disk tail loads (no full skeleton flash).

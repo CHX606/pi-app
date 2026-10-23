@@ -3,11 +3,9 @@ import type { AppEvent } from '@shared/app-events'
 import type { StoreApi } from '@renderer/stores/apply-app-event-types'
 import type { RunState, TimelineItem, UIState } from '@renderer/stores/ui-store-types'
 import { applyAppEvent } from '../apply-app-event'
-import {
-  clearLiveSessionTimeline,
-  getLiveSessionTimeline,
-  saveLiveSessionTimeline,
-} from '@renderer/lib/live-session-timeline-cache'
+import { clearSessionShellForTests } from '@renderer/lib/session-shell'
+import { flushAllStreamPendingSync } from '@renderer/stores/ui-store-stream'
+import { seedSessionForTest, sessionStateForTest } from '@renderer/test/session-state-helpers'
 
 vi.mock('@renderer/features/timeline/tool-card-registry', () => ({
   resolveToolCardTemplate: (toolName: string | undefined) => toolName === 'subagent' ? 'tree' : undefined,
@@ -68,9 +66,8 @@ function makeApi(): StoreApi {
 
 describe('applyAppEvent background live session routing', () => {
   beforeEach(() => {
-    clearLiveSessionTimeline(liveFile)
-    clearLiveSessionTimeline(previewFile)
-    saveLiveSessionTimeline({
+    clearSessionShellForTests()
+    seedSessionForTest({
       sessionId: 'live-session',
       sessionFile: liveFile,
       timelineItems: baseItems,
@@ -83,7 +80,7 @@ describe('applyAppEvent background live session routing', () => {
     })
   })
 
-  it('keeps background deltas in the live cache by sessionFile even when event sessionId is unavailable', async () => {
+  it('keeps background deltas in that session by sessionFile even when event sessionId is unavailable', async () => {
     const api = makeApi()
     applyAppEvent(
       {
@@ -101,9 +98,10 @@ describe('applyAppEvent background live session routing', () => {
     )
 
     expect(api.get().timelineItems).toEqual([])
-    // Deltas are rAF-batched; getLiveSessionTimeline flushes pending text for switch-back.
-    expect(getLiveSessionTimeline(liveFile)?.timelineItems.at(-1)?.text).toBe('streamed text')
-    // A structural event after the delta batch must keep the streamed text in the live cache.
+    // Deltas are rAF-batched per session; a switch-back flushes them first.
+    flushAllStreamPendingSync()
+    expect(sessionStateForTest(liveFile)?.timelineItems.at(-1)?.text).toBe('streamed text')
+    // A structural event after the delta batch must keep the streamed text.
     await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
     applyAppEvent(
       {
@@ -116,7 +114,7 @@ describe('applyAppEvent background live session routing', () => {
       } as AppEvent,
       api,
     )
-    expect(getLiveSessionTimeline(liveFile)?.timelineItems.at(-1)?.text).toBe('streamed text')
+    expect(sessionStateForTest(liveFile)?.timelineItems.at(-1)?.text).toBe('streamed text')
   })
 
   it('coalesces multiple background deltas before switch-back read', async () => {
@@ -138,7 +136,8 @@ describe('applyAppEvent background live session routing', () => {
       )
     }
     expect(api.get().timelineItems).toEqual([])
-    expect(getLiveSessionTimeline(liveFile)?.timelineItems.at(-1)?.text).toBe('hello world')
+    flushAllStreamPendingSync()
+    expect(sessionStateForTest(liveFile)?.timelineItems.at(-1)?.text).toBe('hello world')
   })
 
   it('should_reclaim_background_subagent_rows_without_clearing_preview_identity', () => {

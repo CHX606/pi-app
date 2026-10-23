@@ -89,7 +89,8 @@ export async function executeSlashCommand(
           provider,
           modelId,
         })
-        store.setRunState({ model: response.modelId })
+        // Lands on the session the command ran in, even if the view switched while it awaited.
+        useUIStore.getState().setSessionRunState(sessionFile, { model: response.modelId })
         commitSessionDisplayMeta(sessionFile, { model: response.modelId })
         toast.success(i18n.t('composer:toast.modelSet', { model: response.modelId }))
       } catch (e) {
@@ -111,6 +112,7 @@ export async function executeSlashCommand(
       try {
         // Scope to the viewed session like the thinking picker — the foreground worker may be another session.
         const sessionFile = store.historySessionFile
+        const sessionKey = store.viewSessionKey ?? ''
         if (sessionFile) {
           await ipcClient.invoke('thinkingLevel.set', {
             sessionId: '',
@@ -119,8 +121,8 @@ export async function executeSlashCommand(
           })
         }
         commitSessionDisplayMeta(sessionFile, { thinkingLevel: arg })
+        useUIStore.getState().setSessionRunState(sessionFile ?? sessionKey, { thinkingLevel: arg })
         if (sessionFile && !sessionFilesEqual(useUIStore.getState().historySessionFile, sessionFile)) return true
-        store.setRunState({ thinkingLevel: arg })
         toast.success(`Thinking: ${arg}`)
       } catch (e) {
         console.error('/thinking failed:', e)

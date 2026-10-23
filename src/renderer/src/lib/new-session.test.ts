@@ -6,6 +6,7 @@ const store = {
   currentSessionId: '__pending_new__',
   historySessionFile: null as string | null,
   runState: { model: 'openai/org/model/v2', thinkingLevel: 'high' },
+  promoteViewSession: vi.fn(),
   clearPendingNewSessionPlaceholder: vi.fn(),
   setCurrentSession: vi.fn(),
   clearFileChanges: vi.fn(),
@@ -34,6 +35,7 @@ describe('new session model preselection', () => {
     store.currentWorkspace = 'D:/workspace'
     store.currentSessionId = '__pending_new__'
     store.historySessionFile = null
+    store.promoteViewSession.mockReset()
     store.clearPendingNewSessionPlaceholder.mockReset()
     store.setCurrentSession.mockReset()
     store.clearFileChanges.mockReset()
@@ -89,6 +91,7 @@ describe('new session model preselection', () => {
     expect(store.setCurrentSession).not.toHaveBeenCalled()
     expect(store.setHistoryMeta).not.toHaveBeenCalled()
     expect(store.clearPendingNewSessionPlaceholder).not.toHaveBeenCalled()
+    expect(store.promoteViewSession).not.toHaveBeenCalled()
     expect(store.clearFileChanges).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalledWith('session.setPendingBind', expect.anything())
     expect(invoke).toHaveBeenCalledWith('model.set', expect.objectContaining({ sessionFile: 'C:/sessions/new.jsonl' }))

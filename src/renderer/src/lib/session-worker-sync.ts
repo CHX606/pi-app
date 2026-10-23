@@ -1,6 +1,5 @@
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { isAbortUiHoldActive } from '@renderer/lib/abort-ui-hold'
-import { markLiveSessionTurnEnded } from '@renderer/lib/live-session-timeline-cache'
 import { normalizeSessionFileKey, sessionFilesEqual } from '@renderer/lib/session-file-key'
 import type { RunState } from '@renderer/stores/ui-store-types'
 
@@ -242,7 +241,6 @@ export function applyLiveSnapshotToView(
   }
 
   if (boundSnap.status !== 'running' && viewSessionFile) {
-    markLiveSessionTurnEnded(viewSessionFile, boundSnap.status === 'failed' ? 'failed' : 'idle')
     store.reconcileSessionRuntimeIdle?.(viewSessionFile)
   }
   store.setWorkerLiveSnapshot(boundSnap)

@@ -114,6 +114,8 @@ export async function applyComposerDisplayMeta(meta?: SessionDisplayMeta | null)
   const patch: SessionDisplayMeta = {}
 
   const previewFile = store.historySessionFile
+  // The session this refresh is for; its result is written there even if the view moves on.
+  const sessionKey = store.viewSessionKey
   const generation = ++displayMetaGeneration
   // JSONL meta belongs to this session whatever the async checks below decide; record it now so
   // a newer meta-less refresh (which supersedes this one) can still show it.
@@ -186,15 +188,14 @@ export async function applyComposerDisplayMeta(meta?: SessionDisplayMeta | null)
   if (!workerBoundToView && !patch.model && lm) patch.model = lm
   if (!patch.thinkingLevel && lt) patch.thinkingLevel = lt
 
-  // Switching sessions fires several refreshes; only the newest may paint, and never onto a
-  // session the user already left while this one awaited IPC.
+  // Switching sessions fires several refreshes and explicit choices supersede them; only the
+  // newest may write. It writes the session it was started for, never whichever is visible now.
+  if (generation !== displayMetaGeneration || !sessionKey) return
   const latest = useUIStore.getState()
-  const sameView = previewFile
-    ? sessionFilesEqual(latest.historySessionFile, previewFile)
-    : !latest.historySessionFile
-  if (generation !== displayMetaGeneration || !sameView) return
+  const target = latest.sessionStates[sessionKey]
+  if (!target) return
 
-  const cur = latest.runState
+  const cur = target.runState
   // Bound without a model key: clear stale display rather than keep JSONL/lastModel
   let finalModel = patch.model ?? (!workerBoundToView ? normalizeModelKey(cur.model) : undefined)
   if (workerBoundToView && workerModel) finalModel = workerModel
@@ -206,10 +207,10 @@ export async function applyComposerDisplayMeta(meta?: SessionDisplayMeta | null)
     normalizeThinkingLevel(cur.thinkingLevel) ??
     'off'
 
-  store.setRunState({
+  latest.setSessionRunState(sessionKey, {
     model: finalModel,
     thinkingLevel: finalThink,
   })
 
-  notifyModelFallback(meta?.modelFallbackMessage)
+  if (sessionKey === useUIStore.getState().viewSessionKey) notifyModelFallback(meta?.modelFallbackMessage)
 }

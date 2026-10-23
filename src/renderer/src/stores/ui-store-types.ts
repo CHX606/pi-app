@@ -5,6 +5,7 @@ import type { RightPanelCatalogItem, RightPanelPrefs } from '@shared/right-panel
 import type { WorkerLiveSnapshot } from '@renderer/lib/session-worker-sync'
 import type { SessionAttention } from '@renderer/lib/session-attention'
 import type { SubagentSessionGroup } from '@renderer/lib/subagent-session-types'
+import type { SessionState } from '@renderer/stores/session-state'
 
 export interface SessionItem {
   sessionId: string
@@ -268,5 +269,22 @@ export interface UIState {
   adapterWidgetExpandedBySession: Record<string, boolean>
   setComposerWidget: (state: AdapterWidgetProjection | null) => void
   toggleAdapterWidget: (key: string) => void
+  /** Conversation state per session (normalized sessionFile or a draft key). */
+  sessionStates: Record<string, SessionState>
+  /** Key of the session the view shows; the top-level session fields mirror its entry. */
+  viewSessionKey: string | null
+  /**
+   * The viewed draft (new chat / sandbox) became a real session: move its state to that session's
+   * key and point the view at it, in one write.
+   */
+  promoteViewSession: (target: { sessionId: string; sessionFile: string }) => void
+  /** Install a previously captured session state as the viewed session's state. */
+  adoptViewSessionState: (state: SessionState) => void
+  /**
+   * Patch one session's run state (by session file or session key), whether or not it is visible.
+   * Async results (model/thinking confirmations, meta refreshes) use this with the key they were
+   * started for, so a switch while they await can never land them on another session.
+   */
+  setSessionRunState: (session: string, patch: Partial<RunState>) => void
   processEvent: (event: AppEvent) => void
 }

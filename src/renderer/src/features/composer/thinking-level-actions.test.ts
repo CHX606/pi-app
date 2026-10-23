@@ -34,7 +34,10 @@ describe('applyThinkingLevel session isolation', () => {
     await applyThinkingLevel('medium')
 
     expect(useUIStore.getState().runState.thinkingLevel).toBe('medium')
-    expect(useUIStore.getState().workerLiveSnapshot.sessionFile).toBe('/sessions/a.jsonl')
+    // The running session keeps its own level and worker binding.
+    const a = useUIStore.getState().sessionStates['/sessions/a.jsonl']
+    expect(a.runState.thinkingLevel).toBe('xhigh')
+    expect(a.workerLiveSnapshot).toEqual({ sessionId: 'a', sessionFile: '/sessions/a.jsonl', status: 'running' })
     expect(invoke).not.toHaveBeenCalled()
   })
 

@@ -13,6 +13,8 @@ test.describe('branch switcher', () => {
     const project = path.join(home, 'code', 'demo')
     fs.mkdirSync(project, { recursive: true })
     const git = (...args: string[]) => execFileSync('git', args, { cwd: project, encoding: 'utf8' })
+    // Windows checkouts may use CRLF (core.autocrlf); compare text, not line endings.
+    const readme = () => fs.readFileSync(path.join(project, 'README.md'), 'utf8').replace(/\r\n/g, '\n')
     git('init', '-q', '-b', 'main')
     for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.invalid'], ['commit.gpgsign', 'false']]) git('config', k, v)
     fs.writeFileSync(path.join(project, 'README.md'), '# demo\n')
@@ -49,13 +51,13 @@ test.describe('branch switcher', () => {
       await expect(dialog).toBeVisible()
       await dialog.getByRole('button', { name: 'Stash and switch' }).click()
       await expect(trigger).toContainText('main', { timeout: 15_000 })
-      expect(fs.readFileSync(path.join(project, 'README.md'), 'utf8')).toBe('# demo\n')
+      expect(readme()).toBe('# demo\n')
 
       await trigger.click()
       await popover.getByRole('option', { name: /feature\/login/ }).click()
       await expect(trigger).toContainText('feature/login', { timeout: 15_000 })
       await win.getByRole('button', { name: 'Restore' }).click()
-      await expect.poll(() => fs.readFileSync(path.join(project, 'README.md'), 'utf8')).toBe('# my edit\n')
+      await expect.poll(readme).toBe('# my edit\n')
       await expect(trigger.locator('.rounded-full')).toBeVisible()
 
       // New branch from the picker.

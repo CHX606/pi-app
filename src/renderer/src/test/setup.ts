@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom/vitest'
 import { vi } from 'vitest'
 
+// A developer's own pi overrides (e.g. PI_CODING_AGENT_DIR) must not leak into
+// tests that assume the default ~/.pi/agent layout.
+for (const name of ['PI_CODING_AGENT_DIR', 'PI_DESKTOP_USER_DATA_DIR']) delete process.env[name]
+
 // jsdom does not enable pretendToBeVisual by default, so requestAnimationFrame
 // never fires in tests. Polyfill with setTimeout so deferred UI commits (e.g.
 // the model-switch toast after the picker unmounts) resolve in tests too.

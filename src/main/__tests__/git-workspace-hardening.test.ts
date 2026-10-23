@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 const mocks = vi.hoisted(() => ({
   active: 0,
@@ -193,7 +193,7 @@ describe('R11 watch real git metadata', () => {
     const dir = repo()
     mocks.trustedRoot = dir
     await refreshGitWorkspaceWatch(win().win)
-    expect(mocks.watchers.map((watcher) => watcher.path)).toEqual([join(dir, '.git')])
+    expect(mocks.watchers.map((watcher) => resolve(watcher.path))).toEqual([join(dir, '.git')])
   })
 
   it('should_notify_when_worktree_index_or_shared_refs_change', async () => {
@@ -209,7 +209,7 @@ describe('R11 watch real git metadata', () => {
     await refreshGitWorkspaceWatch(window)
 
     const live = mocks.watchers.filter((watcher) => !watcher.closed)
-    expect(live.map((watcher) => watcher.path)).toEqual([join(dir, '.git')])
+    expect(live.map((watcher) => resolve(watcher.path))).toEqual([join(dir, '.git')])
     live[0].listener('change', 'worktrees/' + worktree.split(/[\\/]/).pop() + '/index')
     vi.advanceTimersByTime(400)
     expect(send).toHaveBeenCalledWith('ipc:git-workspace-changed', { cwd: worktree })
@@ -228,7 +228,7 @@ describe('R11 watch real git metadata', () => {
     const second = refreshGitWorkspaceWatch(win().win)
     await Promise.all([first, second])
     const live = mocks.watchers.filter((watcher) => !watcher.closed)
-    expect(live.map((watcher) => watcher.path)).toEqual([join(b, '.git')])
+    expect(live.map((watcher) => resolve(watcher.path))).toEqual([join(b, '.git')])
   })
 
   it('should_close_watchers_and_pending_notification_when_stopped', async () => {

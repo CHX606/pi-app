@@ -28,7 +28,7 @@ vi.mock('../worker-manager-pool', async (original) => ({
 
 import { WorkerManager } from '../worker-manager'
 import { attachWorkerHandlers, disposeWorkerSlot } from '../worker-manager-pool'
-import { normalizeSessionKey } from '../worker-session-key'
+import { normalizeSessionKey, workspacePoolKey } from '../worker-session-key'
 import { readSessionMetaFromFile } from '../session-file-meta'
 import { configStore } from '../config-store'
 
@@ -37,8 +37,9 @@ type Handler = (message: Message, reply: (response: Message) => void) => void
 type Internals = { pool: Map<string, WorkerSlot>; foregroundPoolKey: string | null }
 
 const key = (file: string) => normalizeSessionKey(file)
+const WS = workspacePoolKey('/workspace')
 
-function makeSlot(file: string | null, handler: Handler, poolKey = file ? key(file) : 'ws:/workspace'): WorkerSlot {
+function makeSlot(file: string | null, handler: Handler, poolKey = file ? key(file) : WS): WorkerSlot {
   let listener: (message: Message) => void = () => {}
   const slot: WorkerSlot = {
     poolKey,
@@ -214,11 +215,11 @@ describe('R1 session binding commits only after a successful load', () => {
     const { manager, state } = setup(a)
 
     await expect(manager.ensureSessionWorker('/sessions/b.jsonl', '/workspace')).rejects.toThrow('SESSION_SWITCH_CANCELLED')
-    expect(state.pool.get('ws:/workspace')).toBe(a)
+    expect(state.pool.get(WS)).toBe(a)
     expect(state.pool.has(key('/sessions/b.jsonl'))).toBe(false)
-    expect(a.poolKey).toBe('ws:/workspace')
+    expect(a.poolKey).toBe(WS)
     expect(a.sessionFile).toBeNull()
-    expect(state.foregroundPoolKey).toBe('ws:/workspace')
+    expect(state.foregroundPoolKey).toBe(WS)
   })
 
   it('should_commit_session_identity_when_workspace_worker_loads', async () => {
@@ -226,7 +227,7 @@ describe('R1 session binding commits only after a successful load', () => {
     const { manager, state } = setup(a)
     await manager.ensureSessionWorker('/sessions/b.jsonl', '/workspace')
     expect(state.pool.get(key('/sessions/b.jsonl'))).toBe(a)
-    expect(state.pool.has('ws:/workspace')).toBe(false)
+    expect(state.pool.has(WS)).toBe(false)
     expect(a.sessionFile).toBe(key('/sessions/b.jsonl'))
     expect(state.foregroundPoolKey).toBe(key('/sessions/b.jsonl'))
   })
@@ -248,7 +249,7 @@ describe('R1 session binding commits only after a successful load', () => {
     const b = state.pool.get(key('/sessions/b.jsonl'))!
     expect(b).not.toBe(a)
     expect(posted(b, 'prompt')).toEqual([
-      [expect.objectContaining({ text: 'hello B', sessionFile: key('/sessions/b.jsonl') })],
+      [expect.objectContaining({ text: 'hello B', sessionFile: '/sessions/b.jsonl' })],
     ])
   })
 

@@ -17,7 +17,7 @@ vi.mock('@renderer/features/timeline/timeline-bottom-anchor', () => ({ requestTi
 
 import { isInterruptedAssistantRow } from '@shared/timeline-incomplete'
 import { captureVisibleLiveSessionTimeline } from '@renderer/lib/capture-live-session-timeline'
-import { clearLiveSessionTimeline, saveLiveSessionTimeline } from '@renderer/lib/live-session-timeline-cache'
+import { seedSessionForTest } from '@renderer/test/session-state-helpers'
 import { reloadCurrentSessionData } from '@renderer/lib/reload-current-session-data'
 import { clearSessionHistoryCache, fetchSessionHistoryTail } from '@renderer/lib/session-history'
 import {
@@ -25,7 +25,6 @@ import {
   focusSession,
   focusSessionSync,
 } from '@renderer/lib/session-shell'
-import { applyBackgroundAppEvent } from '@renderer/stores/apply-app-event-background'
 import { clearStreamPending } from '@renderer/stores/ui-store-stream'
 import { useUIStore } from '@renderer/stores/ui-store'
 import type { TimelineItem } from '@renderer/stores/ui-store-types'
@@ -62,7 +61,6 @@ describe('#99 background turn completion → switch back', () => {
       return {}
     })
     clearStreamPending()
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     clearSessionHistoryCache()
   })
@@ -97,7 +95,7 @@ describe('#99 background turn completion → switch back', () => {
     focusSessionSync('session-b', sessionB)
 
     // A finishes in the background; only the terminal run event reaches the live cache.
-    applyBackgroundAppEvent({
+    useUIStore.getState().processEvent({
       type: 'run',
       phase: 'idle',
       seq: 10,
@@ -135,7 +133,7 @@ describe('#99 background turn completion → switch back', () => {
     captureVisibleLiveSessionTimeline()
     diskRows('C:/sessions/b.jsonl', [])
     focusSessionSync('session-b', sessionB)
-    applyBackgroundAppEvent({
+    useUIStore.getState().processEvent({
       type: 'run',
       phase: 'idle',
       seq: 10,
@@ -185,7 +183,7 @@ describe('#99 background turn completion → switch back', () => {
       runState: { status: 'idle', toolCount: 0, errorCount: 0 },
       workerLiveSnapshot: { sessionId: 'session-a', sessionFile: sessionAKey, status: 'idle' },
     })
-    saveLiveSessionTimeline({
+    seedSessionForTest({
       sessionId: 'session-a', sessionFile: sessionAKey, timelineItems: stale,
       streamingAssistantId: null, optimisticPendingUserText: null, agentTurnBootstrapping: false,
       pendingSteering: [], pendingFollowUp: [], runState: useUIStore.getState().runState,

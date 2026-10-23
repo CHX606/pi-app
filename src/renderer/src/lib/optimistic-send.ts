@@ -1,10 +1,7 @@
 import { useUIStore } from '@renderer/stores/ui-store'
 import { clearAbortQueueIgnore, clearAbortUiHold } from '@renderer/lib/abort-ui-hold'
-import {
-  saveLiveSessionTimeline,
-  updateLiveSessionTimeline,
-} from '@renderer/lib/live-session-timeline-cache'
-import { getSessionView, patchSessionView } from '@renderer/lib/session-shell'
+import { patchSessionState } from '@renderer/stores/session-scope'
+import { sessionKeyOf } from '@renderer/stores/session-state'
 import { sessionFilesEqual } from '@renderer/lib/session-file-key'
 import { requestTimelineBottomAnchor } from '@renderer/features/timeline/timeline-bottom-anchor'
 import type { TimelineItem } from '@renderer/stores/ui-store-types'
@@ -77,28 +74,8 @@ export function appendOptimisticOutgoingMessage(
   })
   // Mark this session running immediately so switch-away/back keeps chrome/sidebar alive
   // before the first worker `run` event arrives.
-  if (store.historySessionFile) {
-    markOptimisticSessionRunning(store.historySessionFile)
-    const latest = useUIStore.getState()
-    saveLiveSessionTimeline({
-      sessionId: latest.currentSessionId,
-      sessionFile: store.historySessionFile,
-      timelineItems: latest.timelineItems,
-      streamingAssistantId: assistantId,
-      runState: latest.runState,
-      pendingSteering: latest.pendingSteering,
-      pendingFollowUp: latest.pendingFollowUp,
-      optimisticPendingUserText: trimmed,
-      agentTurnBootstrapping: true,
-    })
-    patchSessionView(store.historySessionFile, {
-      items: latest.timelineItems,
-      runUI: 'running',
-      streamingAssistantId: assistantId,
-      optimisticPendingUserText: trimmed,
-      agentTurnBootstrapping: true,
-    })
-  }
+  // The rows above already live in this session's own state.
+  if (store.historySessionFile) markOptimisticSessionRunning(store.historySessionFile)
   requestTimelineBottomAnchor('message-sent')
   if (store.runState.status !== 'running') {
     store.setRunState({ status: 'running', startTime: ts })
@@ -116,27 +93,19 @@ function removeOptimisticTurn(items: TimelineItem[], assistantId: string): Timel
   return items.filter((_, index) => index < userIndex || index > assistantIndex)
 }
 
-function clearOptimisticSessionCache(token: OptimisticSendToken): void {
+/** Drop the failed send from the session it was made in, even after the view left it. */
+function clearOptimisticSessionState(token: OptimisticSendToken): void {
   if (!token.sessionFile) return
-  updateLiveSessionTimeline(token.sessionFile, (snapshot) => ({
-    ...snapshot,
-    timelineItems: removeOptimisticTurn(snapshot.timelineItems, token.assistantId),
-    streamingAssistantId:
-      snapshot.streamingAssistantId === token.assistantId ? null : snapshot.streamingAssistantId,
-    runState: { ...snapshot.runState, status: 'idle' },
+  const key = sessionKeyOf(token.sessionFile)
+  const entry = key ? useUIStore.getState().sessionStates[key] : undefined
+  if (!entry) return
+  patchSessionState(key, {
+    timelineItems: removeOptimisticTurn(entry.timelineItems, token.assistantId),
+    streamingAssistantId: entry.streamingAssistantId === token.assistantId ? null : entry.streamingAssistantId,
+    runState: { ...entry.runState, status: 'idle' },
     optimisticPendingUserText: null,
     agentTurnBootstrapping: false,
-  }))
-  const view = getSessionView(token.sessionFile)
-  if (view) {
-    patchSessionView(token.sessionFile, {
-      items: removeOptimisticTurn(view.items, token.assistantId),
-      runUI: 'idle',
-      streamingAssistantId: null,
-      optimisticPendingUserText: null,
-      agentTurnBootstrapping: false,
-    })
-  }
+  })
 }
 
 export function clearOptimisticOutgoing(token: OptimisticSendToken | null): boolean {
@@ -152,7 +121,7 @@ export function clearOptimisticOutgoing(token: OptimisticSendToken | null): bool
   if (targetFile && (!sameView || ownsVisibleTurn)) {
     store.setSessionRuntimeRunning(targetFile, false)
   }
-  clearOptimisticSessionCache(token)
+  clearOptimisticSessionState(token)
   if (!ownsVisibleTurn) return false
 
   useUIStore.setState((state) => ({

@@ -1,34 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  clearLiveSessionTimeline,
-  getLiveSessionTimeline,
-  saveLiveSessionTimeline,
-} from '@renderer/lib/live-session-timeline-cache'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { clearSessionShellForTests } from '@renderer/lib/session-shell'
+import { sessionStateForTest } from '@renderer/test/session-state-helpers'
 import { useUIStore } from '../ui-store'
 
 const sessionFile = '/workspace/session.jsonl'
 
-function seedStaleRunningLiveSnapshot(): void {
-  // Mid-stream switch-away wrote a running snapshot into the live cache.
-  saveLiveSessionTimeline({
-    sessionId: 'session-1',
-    sessionFile,
-    timelineItems: [
-      { id: 'u1', type: 'user-message', text: 'question', timestamp: 1 },
-      { id: 'a1', type: 'assistant-message', text: 'partial answ', thinkingText: '', timestamp: 2 },
-    ],
-    streamingAssistantId: 'a1',
-    runState: { status: 'running', toolCount: 0, errorCount: 0, activeRunId: 'run-1' },
-    pendingSteering: [],
-    pendingFollowUp: [],
-    optimisticPendingUserText: null,
-    agentTurnBootstrapping: false,
-  })
-}
-
-describe('visible run terminal retires stale live cache', () => {
+describe('visible run terminal retires the session turn markers', () => {
   beforeEach(() => {
-    clearLiveSessionTimeline()
+    clearSessionShellForTests()
     useUIStore.setState({
       currentWorkspace: '/workspace',
       currentSessionId: 'session-1',
@@ -48,81 +27,37 @@ describe('visible run terminal retires stale live cache', () => {
     })
   })
 
-  afterEach(() => {
-    clearLiveSessionTimeline()
-  })
-
-  it('should_clear_live_streaming_markers_when_visible_run_goes_idle', () => {
-    seedStaleRunningLiveSnapshot()
-
+  it('should_clear_streaming_markers_when_visible_run_goes_idle', () => {
     useUIStore.getState().processEvent({
-      type: 'run',
-      phase: 'idle',
-      runId: 'run-1',
-      seq: 10,
-      workspaceId: '/workspace',
-      sessionFile,
-      timestamp: 5,
+      type: 'run', phase: 'idle', runId: 'run-1', seq: 10, workspaceId: '/workspace', sessionFile, timestamp: 5,
     })
 
-    const live = getLiveSessionTimeline(sessionFile)
-    expect(live?.runState.status).toBe('idle')
-    expect(live?.streamingAssistantId).toBeNull()
-    expect(live?.optimisticPendingUserText).toBeNull()
-    expect(live?.agentTurnBootstrapping).toBe(false)
-    expect(
-      Object.values(useUIStore.getState().sessionRuntimeRunning).some((v) => v === true),
-    ).toBe(false)
+    const own = sessionStateForTest(sessionFile)
+    expect(own?.runState.status).toBe('idle')
+    expect(own?.streamingAssistantId).toBeNull()
+    expect(own?.optimisticPendingUserText).toBeNull()
+    expect(own?.agentTurnBootstrapping).toBe(false)
+    expect(Object.values(useUIStore.getState().sessionRuntimeRunning).some((v) => v === true)).toBe(false)
   })
 
-  it('should_clear_live_streaming_markers_when_visible_run_fails', () => {
-    seedStaleRunningLiveSnapshot()
-
+  it('should_clear_streaming_markers_when_visible_run_fails', () => {
     useUIStore.getState().processEvent({
-      type: 'run',
-      phase: 'failed',
-      runId: 'run-1',
-      seq: 10,
-      workspaceId: '/workspace',
-      sessionFile,
-      timestamp: 5,
+      type: 'run', phase: 'failed', runId: 'run-1', seq: 10, workspaceId: '/workspace', sessionFile, timestamp: 5,
     })
 
-    const live = getLiveSessionTimeline(sessionFile)
-    expect(live?.runState.status).toBe('failed')
-    expect(live?.streamingAssistantId).toBeNull()
+    const own = sessionStateForTest(sessionFile)
+    expect(own?.runState.status).toBe('failed')
+    expect(own?.streamingAssistantId).toBeNull()
   })
 
-  it('should_clear_live_streaming_markers_on_visible_agent_abort', () => {
-    seedStaleRunningLiveSnapshot()
-
+  it('should_clear_streaming_markers_on_visible_agent_abort', () => {
     useUIStore.getState().processEvent({
-      type: 'agent_error',
-      text: 'aborted',
-      kind: 'aborted',
-      runId: 'run-1',
-      seq: 10,
-      workspaceId: '/workspace',
-      sessionFile,
-      timestamp: 5,
+      type: 'agent_error', text: 'aborted', kind: 'aborted', runId: 'run-1', seq: 10,
+      workspaceId: '/workspace', sessionFile, timestamp: 5,
     })
 
-    const live = getLiveSessionTimeline(sessionFile)
-    expect(live?.runState.status).toBe('idle')
-    expect(live?.streamingAssistantId).toBeNull()
-  })
-
-  it('should_not_create_live_cache_entry_for_sessions_without_one', () => {
-    useUIStore.getState().processEvent({
-      type: 'run',
-      phase: 'idle',
-      runId: 'run-1',
-      seq: 10,
-      workspaceId: '/workspace',
-      sessionFile,
-      timestamp: 5,
-    })
-
-    expect(getLiveSessionTimeline(sessionFile)).toBeNull()
+    const own = sessionStateForTest(sessionFile)
+    expect(own?.runState.status).toBe('idle')
+    expect(own?.streamingAssistantId).toBeNull()
   })
 })

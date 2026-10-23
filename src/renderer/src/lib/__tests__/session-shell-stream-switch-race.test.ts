@@ -18,10 +18,7 @@ import { captureVisibleLiveSessionTimeline } from '@renderer/lib/capture-live-se
 import { enterBlankSession } from '@renderer/lib/blank-session-transition'
 import { ipcClient } from '@renderer/lib/ipc-client'
 import { beginSessionNavigation, isSessionNavigationCurrent } from '@renderer/lib/session-navigation'
-import {
-  clearLiveSessionTimeline,
-  saveLiveSessionTimeline,
-} from '@renderer/lib/live-session-timeline-cache'
+import { seedSessionForTest } from '@renderer/test/session-state-helpers'
 import {
   bindViewToUiStore,
   clearSessionShellForTests,
@@ -55,7 +52,6 @@ describe('session shell stream switch race', () => {
     historyMock.fetch.mockReset()
     vi.mocked(ipcClient.invoke).mockClear()
     clearStreamPending()
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     useUIStore.setState({
       currentWorkspace: '/workspace',
@@ -265,70 +261,6 @@ describe('session shell stream switch race', () => {
     focusSessionSync('session-a', sessionA)
     expect(useUIStore.getState().pendingSteering).toEqual(queue.steering)
     expect(useUIStore.getState().pendingFollowUp).toEqual(queue.followUp)
-  })
-
-  it('should_bind_remapped_stream_id_that_exists_in_session_view', () => {
-    saveLiveSessionTimeline({
-      sessionId: 'session-a',
-      sessionFile: sessionA,
-      timelineItems: [
-        {
-          id: 'live-assistant',
-          type: 'assistant-message',
-          text: 'live',
-          runId: 'run-a',
-          turnId: 'turn-a',
-          timestamp: 3,
-        },
-      ],
-      streamingAssistantId: 'live-assistant',
-      runState: { status: 'running', activeRunId: 'run-a', toolCount: 0, errorCount: 0 },
-      pendingSteering: [],
-      pendingFollowUp: [],
-      optimisticPendingUserText: null,
-      agentTurnBootstrapping: false,
-    })
-
-    bindViewToUiStore({
-      sessionKey: sessionA,
-      sessionId: 'session-a',
-      items: [
-        {
-          id: 'disk-user',
-          type: 'user-message',
-          text: 'question',
-          turnId: 'turn-a',
-          timestamp: 1,
-        },
-        {
-          id: 'disk-assistant',
-          type: 'assistant-message',
-          text: 'richer disk partial',
-          runId: 'run-a',
-          turnId: 'turn-a',
-          timestamp: 2,
-        },
-      ],
-      historyTotal: 2,
-      historyLoaded: 2,
-      runUI: 'running',
-      streamingAssistantId: 'live-assistant',
-      optimisticPendingUserText: null,
-      agentTurnBootstrapping: false,
-      pendingSteering: [],
-      pendingFollowUp: [],
-      phase: 'cached',
-      lastFocusedAt: 1,
-    })
-
-    const state = useUIStore.getState()
-    expect(state.streamingAssistantId).toBe('disk-assistant')
-    expect(
-      state.timelineItems.some(
-        (item) =>
-          item.type === 'assistant-message' && item.id === state.streamingAssistantId,
-      ),
-    ).toBe(true)
   })
 
   it('should_honor_background_tool_boundary_when_switching_back', () => {
@@ -649,38 +581,7 @@ describe('session shell stream switch race', () => {
       turnId: 'turn-2',
     })
 
-    clearLiveSessionTimeline(sessionA)
-    saveLiveSessionTimeline({
-      sessionId: 'session-a',
-      sessionFile: sessionA,
-      timelineItems: [
-        {
-          id: 'stale-assistant-a1',
-          type: 'assistant-message',
-          text: 'stale first answer tail',
-          turnId: 'turn-1',
-          runId: 'run-a',
-          timestamp: 7,
-        },
-        {
-          id: 'stale-tool-a1',
-          type: 'tool-call',
-          toolCallId: 'stale-tool',
-          toolName: 'read',
-          toolPhase: 'end',
-          turnId: 'turn-1',
-          runId: 'run-a',
-          timestamp: 8,
-        },
-      ],
-      streamingAssistantId: 'stale-assistant-a1',
-      runState: { status: 'running', activeRunId: 'run-a', toolCount: 1, errorCount: 0 },
-      pendingSteering: [],
-      pendingFollowUp: [],
-      optimisticPendingUserText: null,
-      agentTurnBootstrapping: false,
-    })
-
+    // A late tail page of the first turn must not replace the follow-up rows this session holds.
     const history = deferred<{
       items: Array<Record<string, unknown>>
       sourceCount: number

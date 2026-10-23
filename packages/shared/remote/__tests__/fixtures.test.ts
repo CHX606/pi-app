@@ -71,7 +71,8 @@ describe('golden fixtures', () => {
     const committed = readdirSync(join(dir, 'messages')).map((n) => `messages/${n}`)
     expect(committed.sort()).toEqual([...expected.keys()].filter((k) => k.startsWith('messages/')).sort())
     for (const [name, content] of expected) {
-      const actual = readFileSync(join(dir, name), 'utf8')
+      // Windows checkouts with core.autocrlf rewrite the committed LF files to CRLF.
+      const actual = readFileSync(join(dir, name), 'utf8').replace(/\r\n/g, '\n')
       if (name === 'crypto-vectors.json') {
         // Deflate output may differ between zlib builds; the frame must still decrypt to the same plaintext.
         const a = JSON.parse(actual)

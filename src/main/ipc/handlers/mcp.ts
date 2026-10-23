@@ -20,6 +20,7 @@ import {
   setAutoEnableCodemode,
 } from '../../mcp/mcp-config'
 import { readMcpStatus, runMcpCli, type McpCliEnv } from '../../mcp/mcp-cli'
+import { explainMissingCommands } from '../../mcp/mcp-command'
 
 type Scope = 'global' | 'project'
 
@@ -150,7 +151,10 @@ export function registerMcpHandlers(): void {
     try {
       hostOnly()
       const agentDir = resolveActiveAgentDir()
-      return { ok: true, ...(await readMcpStatus(cliEnv(agentDir, currentProject()))) }
+      const project = currentProject()
+      const status = await readMcpStatus(cliEnv(agentDir, project))
+      const { servers } = readMcpConfig({ agentDir, project, projectTrusted: await projectTrusted(agentDir, project) })
+      return { ok: true, ...explainMissingCommands(status, servers) }
     } catch (e) {
       return { ok: false, error: errorMessage(e) }
     }

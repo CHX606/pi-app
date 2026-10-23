@@ -3,7 +3,7 @@ import type { GetMessagesResult } from '../session-history'
 
 const mocks = vi.hoisted(() => ({
   history: vi.fn(), list: vi.fn(), meta: vi.fn(),
-  tree: vi.fn(), anchor: vi.fn(), capture: vi.fn(), clearLive: vi.fn(),
+  tree: vi.fn(), anchor: vi.fn(), capture: vi.fn(),
 }))
 vi.mock('@renderer/lib/load-session-history', () => ({ loadSessionHistoryWithRetry: mocks.history }))
 vi.mock('@renderer/lib/refresh-workspace-session-lists', () => ({ refreshWorkspaceSessionLists: mocks.list }))
@@ -17,20 +17,13 @@ vi.mock('@renderer/lib/capture-live-session-timeline', async (importOriginal) =>
     actual.captureVisibleLiveSessionTimeline()
   } }
 })
-vi.mock('@renderer/lib/live-session-timeline-cache', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../live-session-timeline-cache')>()
-  return { ...actual, clearLiveSessionTimeline: (file?: string | null) => {
-    mocks.clearLive(file)
-    actual.clearLiveSessionTimeline(file)
-  } }
-})
 
 import { reloadCurrentSessionData } from '../reload-current-session-data'
 import { useUIStore } from '@renderer/stores/ui-store'
 import { clearStreamPending } from '@renderer/stores/ui-store-stream'
 import { beginSessionNavigation } from '../session-navigation'
 import { clearSessionShellForTests } from '../session-shell'
-import { clearLiveSessionTimeline, getLiveSessionTimeline, saveLiveSessionTimeline } from '../live-session-timeline-cache'
+import { sessionStateForTest } from '@renderer/test/session-state-helpers'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -45,7 +38,6 @@ const history: GetMessagesResult = {
 
 describe('current session reload', () => {
   beforeEach(() => {
-    clearLiveSessionTimeline()
     clearSessionShellForTests()
     vi.clearAllMocks()
     clearStreamPending()
@@ -83,16 +75,13 @@ describe('current session reload', () => {
   it('should_not_rebind_worker_when_only_refreshing_displayed_messages', async () => {
     await reloadCurrentSessionData()
     expect(mocks.capture).toHaveBeenCalledOnce()
-    expect(mocks.clearLive).toHaveBeenCalledWith('/workspace/a.jsonl')
   })
 
-  it('rebuilds live cache while the refreshed session is still running', async () => {
+  it('keeps the refreshed session running while its turn is still active', async () => {
     useUIStore.setState({ sessionRuntimeRunning: { '/workspace/a.jsonl': true } })
     await reloadCurrentSessionData()
     expect(useUIStore.getState().runState.status).toBe('running')
-    expect(mocks.clearLive).toHaveBeenCalledWith('/workspace/a.jsonl')
     expect(mocks.capture).toHaveBeenCalledOnce()
-    expect(mocks.clearLive.mock.invocationCallOrder[0]).toBeLessThan(mocks.capture.mock.invocationCallOrder[0])
   })
 
   it('removes a foreign prefix during a running refresh without losing current tool calls or streamed text', async () => {
@@ -112,21 +101,14 @@ describe('current session reload', () => {
       ],
     })
 
-    const state = useUIStore.getState()
-    saveLiveSessionTimeline({
-      sessionId: 'a', sessionFile: '/workspace/a.jsonl', timelineItems: state.timelineItems,
-      streamingAssistantId: stream.id, runState: { ...state.runState, status: 'running' },
-      pendingSteering: [], pendingFollowUp: [], optimisticPendingUserText: null, agentTurnBootstrapping: false,
-    })
 
     await reloadCurrentSessionData()
     await reloadCurrentSessionData()
 
-    expect(getLiveSessionTimeline('/workspace/a.jsonl')?.timelineItems).toEqual([user, tool, stream])
+    expect(sessionStateForTest('/workspace/a.jsonl')?.timelineItems).toEqual([user, tool, stream])
     expect(useUIStore.getState().timelineItems).toEqual([user, tool, stream])
     expect(useUIStore.getState().streamingAssistantId).toBe(stream.id)
     expect(useUIStore.getState().runState.status).toBe('running')
-    expect(mocks.clearLive).toHaveBeenCalledWith('/workspace/a.jsonl')
   })
 
   it('should_not_overwrite_new_session_when_old_reload_finishes', async () => {
@@ -146,7 +128,6 @@ describe('current session reload', () => {
     expect(useUIStore.getState().historyLoading).toBe(true)
     expect(mocks.meta).not.toHaveBeenCalled()
     expect(mocks.anchor).not.toHaveBeenCalled()
-    expect(mocks.clearLive).not.toHaveBeenCalled()
   })
 
   it('should_keep_newer_reload_when_older_request_finishes_last', async () => {
@@ -182,6 +163,5 @@ describe('current session reload', () => {
     expect(result).toEqual({ ok: false, error: 'read failed' })
     expect(useUIStore.getState().timelineItems[0]?.text).toBe('old history')
     expect(useUIStore.getState().historyLoading).toBe(false)
-    expect(mocks.clearLive).not.toHaveBeenCalled()
   })
 })

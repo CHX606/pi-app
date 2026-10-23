@@ -9,16 +9,29 @@ vi.mock('@renderer/lib/ipc-client', () => ({
   ipcClient: { invoke: (...args: unknown[]) => invoke(...args) },
 }))
 
+const setSessionRunState = vi.fn()
+
 vi.mock('@renderer/stores/ui-store', () => ({
   useUIStore: {
-    getState: () => ({
-      historySessionFile: view.historySessionFile,
-      sessions: [],
-      lastModel: 'anthropic/claude-from-last',
-      lastThinking: 'low',
-      runState: { model: 'jsonl/stale-display', thinkingLevel: 'medium' },
-      setRunState,
-    }),
+    getState: () => {
+      const runState = { model: 'jsonl/stale-display', thinkingLevel: 'medium' }
+      const viewSessionKey = view.historySessionFile ?? 'draft:pending:/proj'
+      return {
+        historySessionFile: view.historySessionFile,
+        viewSessionKey,
+        sessionStates: { [viewSessionKey]: { key: viewSessionKey, runState } },
+        sessions: [],
+        lastModel: 'anthropic/claude-from-last',
+        lastThinking: 'low',
+        runState,
+        setRunState,
+        // Writes for the viewed session behave like setRunState; record the target key too.
+        setSessionRunState: (key: string, patch: unknown) => {
+          setSessionRunState(key, patch)
+          setRunState(patch)
+        },
+      }
+    },
   },
 }))
 

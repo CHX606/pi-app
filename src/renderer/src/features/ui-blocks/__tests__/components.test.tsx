@@ -13,7 +13,7 @@ const EXAMPLES_PATH = resolve(process.cwd(), 'doc/guide/pi-ui-examples.md')
 
 /** Every ```pi-ui fence in the skill's example file, keyed by the envelope id. */
 function loadExamples(): Map<string, string> {
-  const text = readFileSync(EXAMPLES_PATH, 'utf8')
+  const text = readFileSync(EXAMPLES_PATH, 'utf8').replace(/\r\n/g, '\n')
   const blocks = new Map<string, string>()
   for (const match of text.matchAll(/```pi-ui\n([\s\S]*?)\n```/g)) {
     const id = /"id":\s*"([^"]+)"/.exec(match[1])?.[1] ?? String(blocks.size)
