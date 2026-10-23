@@ -15,6 +15,7 @@ import {
   pruneEmptyAssistantItems,
 } from '@renderer/stores/session-ops'
 import {
+  isDraftSessionKey,
   SESSION_FIELDS,
   seedSessionState,
   sessionKeyOf,
@@ -33,8 +34,13 @@ const SESSION_FIELD_SET = new Set<string>(SESSION_FIELDS)
 
 type EntryUpdate = (entry: SessionState) => Partial<SessionState> | null
 
+/** Keys of deleted sessions: late events for them are dropped instead of re-seeding an entry. */
+const removedKeys = new Set<string>()
+const MAX_REMOVED_KEYS = 500
+
 function updateSession(key: string, update: EntryUpdate): void {
   useUIStore.setState((root) => {
+    if (removedKeys.has(key) && !root.sessionStates[key]) return root
     const entry = root.sessionStates[key] ?? seedSessionState(key, root)
     const patch = update(entry)
     if (!patch) return root
@@ -147,7 +153,28 @@ export function sessionStoreApi(key: string, nextItemId: () => string): StoreApi
   return api
 }
 
+/**
+ * Forget a session the renderer will not show again (deleted, or a draft key that was promoted):
+ * drop its `sessionStates` entry and cached scope. Unless `allowReseed`, later events for it are
+ * ignored so they cannot resurrect the entry.
+ */
+export function removeSessionState(sessionFileOrKey: string, opts: { allowReseed?: boolean } = {}): void {
+  const key = isDraftSessionKey(sessionFileOrKey) ? sessionFileOrKey : sessionKeyOf(sessionFileOrKey)
+  if (!key) return
+  scopes.delete(key)
+  if (!opts.allowReseed) {
+    removedKeys.add(key)
+    if (removedKeys.size > MAX_REMOVED_KEYS) removedKeys.delete(removedKeys.values().next().value as string)
+  }
+  const root = useUIStore.getState()
+  if (!root.sessionStates[key] || key === root.viewSessionKey) return
+  const next = { ...root.sessionStates }
+  delete next[key]
+  useUIStore.setState({ sessionStates: next })
+}
+
 /** Test helper: forget cached scopes. */
 export function clearSessionScopesForTests(): void {
   scopes.clear()
+  removedKeys.clear()
 }

@@ -102,6 +102,9 @@ export function SessionContextMenuPortal({
           useUIStore.getState().setHistoryMeta(0, 0, null)
           void ipcClient.invoke('session.setPendingBind', { sessionFile: null })
         }
+        // Drop the deleted session's per-session state so late events cannot resurrect it.
+        const deletedFile = target.sessionFile
+        void import('@renderer/stores/session-scope').then((m) => m.removeSessionState(deletedFile))
         toast.success(t('common:sidebar.deleted'))
         refreshList(target.workspacePath)
       } else {

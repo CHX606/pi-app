@@ -57,6 +57,9 @@ export function createSessionSlice(set: StoreSet): SessionSlice {
         const key = sessionKeyOf(sessionFile)
         if (!key) return s
         const draft = selectViewSession(s)
+        // The draft's state moves to the file key; drop the draft entry so it does not linger.
+        const { [s.viewSessionKey ?? '']: _promoted, ...rest } = s.sessionStates
+        const states = s.viewSessionKey && isDraftSessionKey(s.viewSessionKey) && s.viewSessionKey !== key ? rest : s.sessionStates
         return {
           pendingNewSessionPlaceholder: false,
           currentSessionId: sessionId,
@@ -67,7 +70,7 @@ export function createSessionSlice(set: StoreSet): SessionSlice {
           rewindWorkerBound: false,
           rewindLoadingTree: true,
           sessionStates: {
-            ...s.sessionStates,
+            ...states,
             [key]: {
               ...draft,
               key,
