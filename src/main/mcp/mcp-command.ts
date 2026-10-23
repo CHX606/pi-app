@@ -35,7 +35,7 @@ export function commandResolves(command: string, env: Env = process.env, platfor
   const withExts = (base: string): string[] =>
     win && extname(base) && exts.some((e) => e && e.toLowerCase() === extname(base).toLowerCase())
       ? [base]
-      : exts.map((e) => base + e)
+      : exts.flatMap((e) => (e ? [...new Set([e, e.toLowerCase(), e.toUpperCase()])] : [e]).map((x) => base + x))
 
   if (/[\\/]/.test(cmd)) {
     // A relative path depends on the server's own cwd; only judge absolute ones.
