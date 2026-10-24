@@ -64,7 +64,7 @@ const dirs: string[] = []
 const lines = (edit: (n: number) => string) => Array.from({ length: 30 }, (_, i) => edit(i + 1)).join('\n') + '\n'
 
 function repo(): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'pi-git-hard-')))
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'pi-git-hard-')))
   dirs.push(dir)
   git(dir, 'init', '-q')
   git(dir, 'config', 'user.email', 't@example.com')
